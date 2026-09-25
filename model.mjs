@@ -598,3 +598,527 @@ export function pendingChanges(p) {
     });
   return changes;
 }
+
+// ---------- Breadth pass: chat intents, runs, generated source, deploy ----------
+
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+export const slug = (s) =>
+  String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "") || "app";
+const pySlug = (s) => slug(s).replace(/-/g, "_");
+
+export function chatIntent(text) {
+  const t = String(text || "").toLowerCase();
+  const change = {};
+  let rename = null;
+  const m = String(text || "").match(
+    /(?:rename(?: it| the app)?(?: to)?|call it|name it)\s+["“]?([^"”]+?)["”]?\s*[.!]?\s*$/i,
+  );
+  if (m) rename = m[1].trim();
+  if (/\b(shorter|short|brief|concise|less detail)\b/.test(t)) change.length = "short";
+  else if (/\b(longer|more detail|detailed|elaborate|more context)\b/.test(t))
+    change.length = "detailed";
+  if (/\b(ask (a |for )?(follow|question|clarif)|clarify|follow-?up)/.test(t))
+    change.unknown = "ask";
+  else if (
+    /\b(explain|send (it )?to a person|route to (a )?(person|human)|hand ?off|escalate)\b/.test(t)
+  )
+    change.unknown = "explain";
+  if (/\b(hide|remove|no|without)\b.*\b(sources?|citations?|rule|rows|evidence)\b/.test(t))
+    change.citations = false;
+  else if (/\b(show|display|include|add)\b.*\b(sources?|citations?|rule|rows|evidence)\b/.test(t))
+    change.citations = true;
+  if (/\b(ocean|blue)\b/.test(t)) change.theme = "ocean";
+  else if (/\b(forest|green)\b/.test(t)) change.theme = "forest";
+  if (/\b(public|anyone|everyone|open to all|no sign-?in)\b/.test(t)) change.audience = "public";
+  else if (/\b(team only|private|sign-?in required|invite only)\b/.test(t))
+    change.audience = "team";
+  return { change: Object.keys(change).length ? change : null, rename };
+}
+
+export function trace(p, r) {
+  const a = archetypeOf(p),
+    s = p.settings;
+  const lines = p.source.split("\n").filter(Boolean).length;
+  return [
+    `${a.agent.name} received the input`,
+    `Read ${p.sourceName} (${lines} lines, ${p.sourceKind === "sample" ? "sample" : "local"})`,
+    r.supported
+      ? `Matched: ${a.evidenceLabel(r) || "content"}`
+      : `No match → ${a.bits.unknown[s.unknown]}`,
+    `Applied ${a.bits.length[s.length].toLowerCase()} · ${a.bits.citations[s.citations]}`,
+    ...(p.agents || [])
+      .filter((x) => x.enabled !== false)
+      .map((x) => `Handoff → ${x.name}: ${x.responsibility} (configured, not run)`),
+  ];
+}
+
+export function recordRun(p, question, r) {
+  p.runs ||= [];
+  p.runs.unshift({
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    input: question,
+    output: r.text,
+    supported: r.supported,
+    steps: trace(p, r),
+    revision: p.revision,
+    ms: 3 + (String(question).length % 9),
+  });
+  if (p.runs.length > 25) p.runs.length = 25;
+  return p.runs[0];
+}
+
+export function envVars(p) {
+  const s = p.settings;
+  const base = [{ name: "ARCHITECT_PROJECT_ID", status: "Managed" }];
+  const byFramework = {
+    "Lyzr managed": ["LYZR_API_KEY"],
+    LangGraph: ["LANGCHAIN_API_KEY", "OPENAI_API_KEY"],
+    CrewAI: ["OPENAI_API_KEY"],
+    "OpenAI Agents SDK": ["OPENAI_API_KEY"],
+    "Custom framework": [],
+  };
+  const names = new Set(byFramework[s.framework] || []);
+  if (s.model.startsWith("Anthropic")) names.add("ANTHROPIC_API_KEY");
+  if (s.model.startsWith("OpenAI")) names.add("OPENAI_API_KEY");
+  const custom = p.env || [];
+  const out = [...base];
+  for (const n of names)
+    out.push({
+      name: n,
+      status:
+        n === "LYZR_API_KEY"
+          ? "Managed"
+          : custom.some((c) => c.name === n)
+            ? "Set (demo)"
+            : "Not set",
+    });
+  for (const c of custom)
+    if (!out.some((o) => o.name === c.name))
+      out.push({ name: c.name, status: "Set (demo)" });
+  return out;
+}
+
+export function frameworkSetup(p) {
+  const s = p.settings;
+  const entry = s.customFramework || "";
+  return (
+    {
+      "Lyzr managed": {
+        status: "Ready (demo)",
+        entry: `agents/${pySlug(archetypeOf(p).agent.name)}.yaml`,
+        runtime: "Lyzr Agent Studio",
+        steps: ["Agent configuration is managed for you", "Connect the knowledge source", "Test, then publish"],
+      },
+      LangGraph: {
+        status: "Needs credentials",
+        entry: entry || "agents/graph.py",
+        runtime: "Python 3.11 · langgraph",
+        steps: ["Set LANGCHAIN_API_KEY and OPENAI_API_KEY", "Install requirements.txt", "Run a test with the sample input"],
+      },
+      CrewAI: {
+        status: "Needs credentials",
+        entry: entry || "agents/crew.py",
+        runtime: "Python 3.11 · crewai",
+        steps: ["Set OPENAI_API_KEY", "Install requirements.txt", "Run the crew with the sample input"],
+      },
+      "OpenAI Agents SDK": {
+        status: "Needs credentials",
+        entry: entry || "agents/agent.py",
+        runtime: "Python 3.11 · openai-agents",
+        steps: ["Set OPENAI_API_KEY", "Install requirements.txt", "Run the agent with the sample input"],
+      },
+      "Custom framework": {
+        status: entry ? "Not verified" : "Needs setup",
+        entry: entry || "agents/main.py",
+        runtime: "Your runtime",
+        steps: ["Name the entry point that exposes run(input) → output", "Describe required configuration", "Run a test to verify the mapping"],
+      },
+    }[s.framework] || { status: "Unknown", entry: entry || "agents/main.py", runtime: "", steps: [] }
+  );
+}
+
+function agentSource(p, a, s, agent, dataFile) {
+  const setup = frameworkSetup(p);
+  const prompt = `agents/prompts/${agent}.md`;
+  if (s.framework === "LangGraph")
+    return {
+      path: setup.entry,
+      text: `"""LangGraph workflow for ${p.name}. Generated by Architect; edit freely."""
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+class State(TypedDict):
+    question: str
+    passages: list[str]
+    answer: str
+
+def retrieve(state: State) -> State:
+    # Keyword lookup over ${dataFile}. Replace with your retriever.
+    ...
+
+def answer(state: State) -> State:
+    # Instructions live in ${prompt}
+    ...
+
+def fallback(state: State) -> State:
+    # ${cap(a.bits.unknown[s.unknown])}
+    ...
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_node("fallback", fallback)
+graph.set_entry_point("retrieve")
+graph.add_conditional_edges("retrieve", lambda st: "answer" if st["passages"] else "fallback")
+graph.add_edge("answer", END)
+graph.add_edge("fallback", END)
+app = graph.compile()
+`,
+    };
+  if (s.framework === "CrewAI")
+    return {
+      path: setup.entry,
+      text: `"""CrewAI crew for ${p.name}. Generated by Architect; edit freely."""
+from crewai import Agent, Task, Crew
+
+${agent} = Agent(
+    role="${a.agent.name}",
+    goal="${a.agent.job}",
+    backstory=open("${prompt}").read(),
+    verbose=False,
+)
+
+task = Task(
+    description="Answer {question} using only ${dataFile}. ${cap(a.bits.unknown[s.unknown])}.",
+    expected_output="${a.bits.length[s.length]} · ${a.bits.citations[s.citations]}",
+    agent=${agent},
+)
+
+crew = Crew(agents=[${agent}], tasks=[task])
+
+def run(question: str) -> str:
+    return crew.kickoff(inputs={"question": question})
+`,
+    };
+  if (s.framework === "OpenAI Agents SDK")
+    return {
+      path: setup.entry,
+      text: `"""OpenAI Agents SDK agent for ${p.name}. Generated by Architect; edit freely."""
+from agents import Agent, Runner, function_tool
+
+@function_tool
+def search_source(query: str) -> list[str]:
+    """Keyword lookup over ${dataFile}."""
+    ...
+
+${agent} = Agent(
+    name="${a.agent.name}",
+    instructions=open("${prompt}").read(),
+    tools=[search_source],
+)
+
+def run(question: str) -> str:
+    return Runner.run_sync(${agent}, question).final_output
+`,
+    };
+  if (s.framework === "Custom framework")
+    return {
+      path: setup.entry,
+      text: `"""Custom entry point for ${p.name}.
+
+Architect calls run(input) and expects a dict with:
+  text (str), supported (bool), citation (str | None)
+Instructions: ${prompt}
+Source: ${dataFile}
+Status: ${setup.status}
+"""
+
+def run(input: str) -> dict:
+    raise NotImplementedError("Wire your framework here")
+`,
+    };
+  return {
+    path: setup.entry,
+    text: `# Lyzr managed agent for ${p.name}. Generated by Architect.
+name: ${a.agent.name}
+description: ${a.agent.job}
+instructions_file: ${prompt}
+model: ${s.model}
+knowledge:
+  - ${dataFile}
+tools:
+${(p.tools || ["read_source"]).map((t) => `  - ${t}`).join("\n")}
+behavior:
+  length: ${s.length}
+  unknown: ${s.unknown}
+  citations: ${s.citations}
+`,
+  };
+}
+
+export function generateFiles(p) {
+  const a = archetypeOf(p),
+    s = p.settings,
+    agent = pySlug(a.agent.name);
+  const dataFile = `data/${slug(p.sourceName)}.${a.id === "insight" ? "csv" : "txt"}`;
+  const who = s.audience === "team" ? "teammates" : "customers";
+  const instructions = `# ${a.agent.name}
+
+You are the ${a.agent.name} for ${p.name}. ${a.agent.does}
+
+## Rules
+
+- ${a.bits.length[s.length]}.
+- ${cap(a.bits.unknown[s.unknown])}.
+- ${cap(a.bits.citations[s.citations])}.
+- Use only ${p.sourceName} (${dataFile}). Never invent content.
+${(p.agents || []).length ? `\n## Handoffs\n\n${p.agents.map((x) => `- After answering, ${x.trigger.toLowerCase()}: ${x.name} (${x.responsibility.toLowerCase()})`).join("\n")}\n` : ""}`;
+  const files = [
+    {
+      path: "README.md",
+      area: "readme",
+      text: `# ${p.name}
+
+${a.promise(who, a.material)}
+
+- Pattern: ${a.label}
+- Agent: ${a.agent.name} on ${s.framework}
+- Audience: ${s.audience === "team" ? "invited teammates (sign-in required)" : "anyone with the link"}
+
+## Run locally
+
+\`\`\`sh
+npm install
+npm run dev
+\`\`\`
+
+Generated by Architect. Edit \`architect.json\`, the agent files or the data; Architect keeps the plan in sync with what is here.
+`,
+    },
+    {
+      path: "architect.json",
+      area: "config",
+      text:
+        JSON.stringify(
+          {
+            name: p.name,
+            pattern: a.id,
+            audience: s.audience,
+            theme: s.theme,
+            agent: {
+              name: a.agent.name,
+              framework: s.framework,
+              model: s.model,
+              entry: frameworkSetup(p).entry,
+              behavior: { length: s.length, unknown: s.unknown, citations: s.citations },
+              tools: p.tools || ["read_source"],
+              handoffs: (p.agents || []).map((x) => ({ name: x.name, responsibility: x.responsibility, trigger: x.trigger })),
+            },
+            source: { name: p.sourceName, file: dataFile },
+          },
+          null,
+          2,
+        ) + "\n",
+    },
+    {
+      path: "app/index.html",
+      area: "app",
+      text: `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>${p.name}</title>
+    <link rel="stylesheet" href="theme-${s.theme}.css" />
+  </head>
+  <body>
+    <main>
+      <h1>${a.app.h2}</h1>
+      <p>${a.app.intro}</p>
+      <form id="ask"><textarea placeholder="${a.app.placeholder}"></textarea><button>${a.app.button}</button></form>
+      <section id="result" hidden></section>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
+`,
+    },
+    {
+      path: "app/app.js",
+      area: "app",
+      text: `// ${p.name} front end. Generated by Architect; edit freely.
+const settings = ${JSON.stringify({ length: s.length, unknown: s.unknown, citations: s.citations })};
+
+document.querySelector("#ask").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = e.target.querySelector("textarea").value.trim();
+  const res = await fetch("/api/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ question, settings }),
+  });
+  render(await res.json());
+});
+
+function render(r) {
+  const out = document.querySelector("#result");
+  out.hidden = false;
+  out.innerHTML = \`<h2>\${r.supported ? ${JSON.stringify(a.app.found)} : ${JSON.stringify(a.app.missing)}}</h2><p>\${r.text}</p>\` +
+    (r.citation && settings.citations ? \`<blockquote>\${r.citation}</blockquote>\` : "");
+}
+`,
+    },
+    { path: `agents/prompts/${agent}.md`, area: "config", text: instructions },
+    { ...agentSource(p, a, s, agent, dataFile), area: "agent" },
+    { path: dataFile, area: "data", text: p.source + "\n" },
+    {
+      path: "tests/behavior.test.mjs",
+      area: "config",
+      text: `import test from "node:test";
+import assert from "node:assert/strict";
+import { ask } from "../api/ask.mjs";
+
+${a.chips
+  .map(
+    ([label, q], i) => `test(${JSON.stringify(label)}, async () => {
+  const r = await ask(${JSON.stringify(q)});
+  assert.equal(r.supported, ${i < 2});${i < 2 && s.citations ? "\n  assert.ok(r.citation);" : ""}
+});`,
+  )
+  .join("\n\n")}
+`,
+    },
+    {
+      path: ".env.example",
+      area: "env",
+      text: envVars(p)
+        .map((v) => `${v.name}=${v.status === "Managed" ? "# managed by Architect" : ""}`)
+        .join("\n") + "\n",
+    },
+    {
+      path: ".github/workflows/deploy.yml",
+      area: "deploy",
+      text: `name: Deploy ${p.name}
+on:
+  push:
+    branches: [${p.git.branch || "main"}]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm test
+      - uses: architect/deploy@v1
+        with:
+          project: \${{ vars.ARCHITECT_PROJECT_ID }}
+          environment: production
+`,
+    },
+  ];
+  return files;
+}
+
+export function changedAreas(p) {
+  const pending = pendingChanges(p);
+  const areas = new Set();
+  if (p.git.committedRevision === 0) return new Set(["readme", "config", "app", "agent", "data", "env", "deploy"]);
+  for (const c of pending) {
+    const r = c.reason.toLowerCase();
+    if (/knowledge source/.test(r)) areas.add("data");
+    else if (/renamed/.test(r)) areas.add("readme"), areas.add("config"), areas.add("app");
+    else if (/setup|framework|entry/.test(r) || (c.before && c.after && (c.before.framework !== c.after.framework || c.before.customFramework !== c.after.customFramework || c.before.model !== c.after.model)))
+      areas.add("agent"), areas.add("config"), areas.add("env");
+    else if (/appearance/.test(r)) areas.add("app"), areas.add("config");
+    else if (/tool|agent/.test(r)) areas.add("agent"), areas.add("config");
+    else if (/variable/.test(r)) areas.add("env");
+    else areas.add("config");
+  }
+  return areas;
+}
+
+export function rollback(p, release) {
+  p.settings = clone(release.settings);
+  p.source = release.source;
+  p.sourceName = release.sourceName;
+  p.sourceKind = release.sourceKind;
+  p.name = release.name;
+  p.revision++;
+  p.changes.push({
+    revision: p.revision,
+    reason: `Rolled back to release ${release.number}`,
+    at: new Date().toISOString(),
+  });
+  return publish(p);
+}
+
+export function addAgent(p, agent) {
+  p.agents ||= [];
+  const entry = {
+    id: crypto.randomUUID(),
+    enabled: true,
+    trigger: "After the main agent answers",
+    origin: "Created here",
+    status: "Configured · not run in prototype",
+    ...agent,
+  };
+  p.agents.push(entry);
+  p.revision++;
+  p.changes.push({
+    revision: p.revision,
+    reason: `Added agent: ${entry.name}`,
+    at: new Date().toISOString(),
+  });
+  return entry;
+}
+
+export function removeAgent(p, id) {
+  const i = (p.agents || []).findIndex((x) => x.id === id);
+  if (i < 0) return false;
+  const [gone] = p.agents.splice(i, 1);
+  p.revision++;
+  p.changes.push({
+    revision: p.revision,
+    reason: `Removed agent: ${gone.name}`,
+    at: new Date().toISOString(),
+  });
+  return true;
+}
+
+export const TOOLS = [
+  ["read_source", "Read the knowledge source", true],
+  ["send_reply", "Send a reply by email", false],
+  ["create_ticket", "Create a ticket in the helpdesk", false],
+  ["lookup_record", "Look up a record in the database", false],
+];
+
+export function setTools(p, tools) {
+  const before = (p.tools || ["read_source"]).slice().sort().join(",");
+  const after = tools.slice().sort().join(",");
+  if (before === after) return false;
+  p.tools = tools;
+  p.revision++;
+  p.changes.push({
+    revision: p.revision,
+    reason: `Updated tools: ${tools.join(", ") || "none"}`,
+    at: new Date().toISOString(),
+  });
+  return true;
+}
+
+export function addEnv(p, name) {
+  const clean = String(name || "").trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  if (!clean) return null;
+  p.env ||= [];
+  if (p.env.some((e) => e.name === clean)) return null;
+  p.env.push({ name: clean });
+  p.revision++;
+  p.changes.push({
+    revision: p.revision,
+    reason: `Added variable: ${clean}`,
+    at: new Date().toISOString(),
+  });
+  return clean;
+}

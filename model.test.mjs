@@ -167,3 +167,104 @@ test("releases keep their pattern so recipient views render the right app", () =
   assert.equal(r.archetype, "insight");
   assert.match(answer(r, "total").text, /Total/);
 });
+
+import {
+  chatIntent,
+  recordRun,
+  generateFiles,
+  envVars,
+  changedAreas,
+  rollback,
+  addAgent,
+  setTools,
+  addEnv,
+  frameworkSetup,
+} from "./model.mjs";
+import { zipBytes } from "./zip.mjs";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+
+test("chat intents map plain requests to reviewable setting changes", () => {
+  assert.deepEqual(chatIntent("make the answers shorter and show sources").change, {
+    length: "short",
+    citations: true,
+  });
+  assert.deepEqual(chatIntent("ask a follow-up when unsure").change, { unknown: "ask" });
+  assert.deepEqual(chatIntent("hide the sources").change, { citations: false });
+  assert.deepEqual(chatIntent("open it to anyone").change, { audience: "public" });
+  assert.equal(chatIntent("rename it to Help Hub").rename, "Help Hub");
+  assert.equal(chatIntent("add a login page").change, null);
+});
+
+test("runs record a trace that reflects settings, matches and handoffs", () => {
+  const p = createProject("policy app");
+  const r = recordRun(p, "Can I carry over my leave?", answer(p, "Can I carry over my leave?"));
+  assert.equal(r.supported, true);
+  assert.match(r.steps[2], /Matched: Leave policy/);
+  addAgent(p, { name: "Summarizer", responsibility: "Summarize the answer" });
+  const r2 = recordRun(p, "dog", answer(p, "dog"));
+  assert.match(r2.steps[2], /No match/);
+  assert.match(r2.steps.at(-1), /Handoff → Summarizer/);
+  assert.equal(p.runs.length, 2);
+  assert.equal(p.runs[0].input, "dog");
+});
+
+test("generated files follow the framework, settings, source and pattern", () => {
+  const p = createProject("sales", false, { archetype: "insight" });
+  let paths = generateFiles(p).map((f) => f.path);
+  assert.ok(paths.includes("agents/data_analyst.yaml"));
+  assert.ok(paths.includes("data/example-sales-table.csv"));
+  settingsChange(p, { framework: "LangGraph", model: "Anthropic · bring your key" }, "Updated agent setup");
+  const files = generateFiles(p);
+  paths = files.map((f) => f.path);
+  assert.ok(paths.includes("agents/graph.py"));
+  assert.match(files.find((f) => f.path === "agents/graph.py").text, /StateGraph/);
+  assert.match(files.find((f) => f.path === ".env.example").text, /ANTHROPIC_API_KEY/);
+  assert.match(files.find((f) => f.path === "agents/prompts/data_analyst.md").text, /Just the number/);
+  assert.equal(frameworkSetup(p).status, "Needs credentials");
+  settingsChange(p, { framework: "Custom framework", customFramework: "agents/ranker.py" }, "Updated agent setup");
+  assert.ok(generateFiles(p).some((f) => f.path === "agents/ranker.py"));
+  assert.equal(frameworkSetup(p).status, "Not verified");
+});
+
+test("changed areas track what a commit would touch", () => {
+  const p = createProject("policy app");
+  p.git.committedRevision = p.revision;
+  assert.equal(changedAreas(p).size, 0);
+  settingsChange(p, { length: "detailed" }, "Updated behavior");
+  assert.deepEqual([...changedAreas(p)], ["config"]);
+  recordSource(p, "Leave policy: none.", "Local");
+  assert.ok(changedAreas(p).has("data"));
+  setTools(p, ["read_source", "send_reply"]);
+  assert.ok(changedAreas(p).has("agent"));
+  assert.equal(addEnv(p, "my key"), "MY_KEY");
+  assert.ok(envVars(p).some((v) => v.name === "MY_KEY" && v.status === "Set (demo)"));
+});
+
+test("rollback republishes an older release as a new release without losing history", () => {
+  const p = createProject("policy app");
+  const r1 = publish(p);
+  settingsChange(p, { citations: false }, "Updated behavior");
+  const r2 = publish(p);
+  const r3 = rollback(p, r1);
+  assert.equal(p.releases.length, 3);
+  assert.equal(r3.number, 3);
+  assert.equal(r3.settings.citations, true);
+  assert.equal(r2.settings.citations, false);
+  assert.equal(p.settings.citations, true);
+  assert.match(p.changes.at(-1).reason, /Rolled back to release 1/);
+});
+
+test("the generated ZIP is a valid archive containing every file", () => {
+  const p = createProject("policy app");
+  const files = generateFiles(p);
+  const bytes = zipBytes(files);
+  const dir = mkdtempSync(join(tmpdir(), "architect-zip-"));
+  const file = join(dir, "source.zip");
+  writeFileSync(file, bytes);
+  const listing = execFileSync("unzip", ["-l", file], { encoding: "utf8" });
+  for (const f of files) assert.ok(listing.includes(f.path), f.path);
+  execFileSync("unzip", ["-tq", file]);
+});
