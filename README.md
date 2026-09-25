@@ -1,50 +1,70 @@
-# Architect 2.0 — first integrated prototype
+# Architect 2.0 — prototype
 
-25 September 2026. This is the active implementation begun after the user's requested second-agent Q&A. The employer's assignment is the evaluation standard: design/end-to-end UX first, feature coverage second, functioning services a bonus. No numeric score is established.
+**Live:** https://eppisai.github.io/architect-2/ · **Source:** this repository
 
-## Run
+A vibe-coding platform for people who don't write code and for developers who do. You describe what people need; Architect reads it into a starting pattern, shows the app as three steps, and lets you shape any step in place. One change flows through the plan, the preview, the agent, the generated code and the release. Developers get the same project as files, runs and environments without leaving the workspace.
 
-From the workspace root:
+## Try it in three minutes
+
+1. **Home.** Keep the example brief or pick one under *Explore examples*, then *Shape this idea*. Sign in with any provider (simulated) or *Try the demo workspace*; your brief survives sign-in.
+2. **Shape.** Architect reads the brief into the closest of three patterns (answers from documents, requests sorted and routed, answers from your numbers), names the app and guesses the audience. Change any of it, then *Create the plan*.
+3. **Plan.** Select **step 2** and change how it behaves. Review the before/after, apply, and watch the plan cards update. *Undo* is one click.
+4. **Build → App.** Try the sample inputs, including the one the app cannot answer. Open the supporting evidence. Every input is recorded in **Runs** with a trace.
+5. **Chat.** Type “shorter answers and show sources” (or “rename it to Help Hub”). The chat proposes a reviewable change instead of applying it silently.
+6. **Agents.** Edit behavior, toggle tools, run a test, switch the framework (Lyzr managed, LangGraph, CrewAI, OpenAI Agents SDK, custom) and add a second agent. **Code** shows the generated files change with you; download them as a real ZIP.
+7. **Changes.** Connect a demo repository, see the field-level diff and the files affected, commit, then sync. Committed and synced are separate states.
+8. **Deploy.** Publish, watch the release progress, open the working recipient view, roll back to an earlier release, add a custom domain.
+9. **Import.** From Home, *Import a project* → GitHub or ZIP → inspection → *What I found* → pick a first change. The imported project keeps its framework, sign-in and baseline; the change arrives as a proposal.
+
+## What is real and what is simulated
+
+| Real, in this browser | Simulated, clearly labelled |
+|---|---|
+| Brief interpretation into three patterns, names and audience | Sign-in providers and email links (demo account, nothing sent) |
+| Projects, revisions, undo, release snapshots, rollback | AI generation and freeform edits (three deterministic patterns) |
+| Deterministic answers, routing and table math over editable local source text | Repository or archive inspection (one prepared fixture) |
+| Chat intents mapped to reviewable setting changes | Agent runtimes for the named frameworks (scaffold files only) |
+| Recorded runs with step traces | GitHub commit and sync (local states, no remote) |
+| Generated source files and a real ZIP archive | Production URLs, deploy logs and DNS verification |
+| Working recipient route for each release | Studio agent catalog, connectors, invites |
+
+Projects live in `localStorage`. A fresh browser starts empty; the account menu can reset the demo.
+
+## Feature map
+
+| Assignment item | Where |
+|---|---|
+| Authentication | Sign-in page (Google, GitHub, email link, demo), account menu, sign out, reset; app-side sign-in per project |
+| Homepage | Brief, examples, import, consult, recent projects with live/draft state and last action |
+| Chat window | Contextual to the selected step, proposes reviewable changes, records other requests |
+| App preview | Interactive per pattern, sample inputs, evidence, appearance, audience |
+| Agent section | Behavior, knowledge, tools, test panel, framework/model with setup status, add/attach/duplicate/custom agents, handoffs |
+| UI getting built | Reading, shaping, building and publishing progress with pause/skip |
+| GitHub integration | Connect, branch, working/committed/synced states, field diff, files affected, commit, sync; imported repos arrive connected |
+| Deploying the app | Preview vs production, publish flow, releases, rollback, deploy log, custom domain, recipient view |
+| Also | Import inspection, Code view with ZIP export, Runs with traces, environment variables, members, archive, project export |
+
+## Run locally
 
 ```sh
-python3 -m http.server 49184 --bind 127.0.0.1
+python3 -m http.server 8080
 ```
 
-Open `http://127.0.0.1:49184/architect-v2/`. It is a dependency-free browser application. Use `node --test architect-v2/model.test.mjs` for state tests.
+Open `http://localhost:8080/`. No build step, no dependencies.
 
-## Try the actual flow
+```sh
+node --test model.test.mjs
+```
 
-1. Shape the included idea and continue in the demo workspace.
-2. Select the answer step. Change length and the no-answer behavior, review, then apply.
-3. Build the version. Try carryover leave and the uncovered question. Inspect a source.
-4. Open Agents; see the same settings. Open Changes; inspect the actual changed fields.
-5. Connect a demo repository, commit and sync. These are separate saved states.
-6. Publish a local release and open it as a sample employee.
-7. Undo a settings change in the draft. The existing release keeps its prior configuration.
-8. Return home and import the Northstar example. Inspect React/sign-in/LangGraph baseline, add sources, then review that focused change.
+Nineteen model tests cover interpretation, all three patterns, chat intents, runs, generated files, changed-file tracking, rollback and the ZIP writer.
 
-## What is real
+## Design notes
 
-Browser-local project persistence; structured settings edits; contextual request history; before/after review; versioned settings undo; local source text editing/import; deterministic question examples; configuration export; release snapshots and recipient routes. A change is shared across plan, preview and agent setup. Release snapshots freeze settings, source and name.
+- **Select, understand, change.** The plan is the app drawn as steps. Selecting a step opens the controls that shape it, and the same controls appear in the preview and the agent view. There is one source of truth for behavior.
+- **Nothing applies silently.** Chat, chips and forms all produce a proposal with a before/after and an example of the effect. Undo is always available; releases never change after the fact.
+- **Two audiences, one workspace.** Non-technical people never need the Developer section. Developers get files, runs, environments and framework setup on the same project, and see exactly which files a change touches.
+- **Honest boundaries.** Simulated services say so where they happen, once, without banners on every screen.
 
-## What is simulated or incomplete
+## Not in this prototype
 
-AI generation and freeform AI edits, account providers, repository scanning/import, agent framework execution, GitHub connection/commit/sync and cloud deployment. Custom chat is saved as a request and explicitly offers supported example edits. Unknown questions follow a defined no-answer behavior; there is no semantic retrieval. Source examples use three keyword topics and named policy lines. Prototype releases work only in their originating browser storage and are not public deployment URLs.
-
-Framework setup is versioned configuration, not proof of arbitrary framework compatibility. Studio reuse, source integrations and import-provider dialogs are shallow explanation/setup demonstrations. These do not constitute full preservation of current Architect capabilities.
-
-Still needed for the complete assignment: deeper meaningful secondary flows (including agent creation/reuse, templates/Agentlets, integrations, database, sharing, usage and deployment/domain states), broader visual/accessibility review, a real public deployment of this prototype, and a GitHub source repository. The older `prototype/` remains untouched as historical work.
-
-## Verification performed
-
-- Eight automated model tests: edit propagation/undo; frozen release settings/source/name; changed source output; unsupported questions; framework preservation; no-op revisions; custom entry-point versioning; initial snapshot review.
-- Chrome walkthrough: demo account → visual plan → detailed/follow-up edit → build → both answer paths → supporting source → matching agent settings → exact-field diff → demo connect/commit/sync → recipient sign-in/release.
-- Changed the draft after release, refreshed recipient view, and confirmed it retained the earlier fallback behavior.
-- Imported sample baseline and applied a citation-only change in the shared workspace.
-- Desktop screenshot critique; in-app browser at 390px: home and plan fit without horizontal overflow, conversation opens. Settings navigation retained after discovering it was hidden on narrow screens. This is not a complete mobile/accessibility audit.
-
-## Independent critique and resulting fixes
-
-The second agent challenged an isolated planning screen, then reviewed implementation. Fixed cross-project proposal leakage, behavior-only diffs hiding technical edits, unversioned custom entry points, hardcoded source previews, no-op first suggested edit, and missing initial commit path. Also scoped suggested changes to their named action, made selected editors visible, and kept page navigation from inheriting the prior page's scroll.
-
-No participant usability test was conducted. Local model tests and assistant walkthroughs are evidence about these paths, not proof of a 10/10 submission.
+Live model calls, real provider sign-in, repository cloning, framework execution, remote Git, hosting of generated apps, in-place file editing, a database for projects. Each has a designed place in the flow and a labelled stand-in.
