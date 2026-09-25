@@ -11,7 +11,7 @@ A vibe-coding platform for people who don't write code and for developers who do
 3. **Plan.** Select **step 2** and change how it behaves. Review the before/after, apply, and watch the plan cards update. *Undo* is one click.
 4. **Build → App.** Try the sample inputs, including the one the app cannot answer. Open the supporting evidence. Every input is recorded in **Runs** with a trace.
 5. **Chat.** Type “shorter answers and show sources” (or “rename it to Help Hub”). The chat proposes a reviewable change instead of applying it silently.
-6. **Agents.** Edit behavior, toggle tools, run a test, switch the framework (Lyzr managed, LangGraph, CrewAI, OpenAI Agents SDK, custom) and add a second agent. **Code** shows the generated files change with you; download them as a real ZIP.
+6. **Agents.** Edit behavior, toggle tools (turn off source reading and the app answers with a setup state), run a test, switch the framework (Lyzr managed, LangGraph, CrewAI, OpenAI Agents SDK, custom) and add a second agent. **Code** shows the generated files change with you; download them as a ZIP that runs: `npm run dev` serves the app and its API, `npm test` runs its tests.
 7. **Changes.** Connect a demo repository, see the field-level diff and the files affected, commit, then sync. Committed and synced are separate states.
 8. **Deploy.** Publish, watch the release progress, open the working recipient view, roll back to an earlier release, add a custom domain.
 9. **Import.** From Home, *Import a project* → GitHub or ZIP → inspection → *What I found* → pick a first change. The imported project keeps its framework, sign-in and baseline; the change arrives as a proposal.
@@ -25,7 +25,7 @@ A vibe-coding platform for people who don't write code and for developers who do
 | Deterministic answers, routing and table math over editable local source text | Repository or archive inspection (one prepared fixture) |
 | Chat intents mapped to reviewable setting changes | Agent runtimes for the named frameworks (scaffold files only) |
 | Recorded runs with step traces | GitHub commit and sync (local states, no remote) |
-| Generated source files and a real ZIP archive | Production URLs, deploy logs and DNS verification |
+| Generated source as a runnable project (server, API engine, tests, stylesheet) in a real ZIP | Production URLs, deploy logs and DNS verification |
 | Working recipient route for each release | Studio agent catalog, connectors, invites |
 
 Projects live in `localStorage`. A fresh browser starts empty; the account menu can reset the demo.
@@ -41,8 +41,8 @@ Projects live in `localStorage`. A fresh browser starts empty; the account menu 
 | Agent section | Behavior, knowledge, tools, test panel, framework/model with setup status, add/attach/duplicate/custom agents, handoffs |
 | UI getting built | Reading, shaping, building and publishing progress with pause/skip |
 | GitHub integration | Connect, branch, working/committed/synced states, field diff, files affected, commit, sync; imported repos arrive connected |
-| Deploying the app | Preview vs production, publish flow, releases, rollback, deploy log, custom domain, recipient view |
-| Also | Import inspection, Code view with ZIP export, Runs with traces, environment variables, members, archive, project export |
+| Deploying the app | Preview vs production, publish flow, releases that snapshot settings, source, agents and tools, rollback, deploy log, custom domain, working recipient link |
+| Also | Import inspection, Code view with runnable ZIP export, Runs with traces, environment variables, members, archive, project export |
 
 ## Run locally
 
@@ -56,7 +56,7 @@ Open `http://localhost:8080/`. No build step, no dependencies.
 node --test model.test.mjs
 ```
 
-Nineteen model tests cover interpretation, all three patterns, chat intents, runs, generated files, changed-file tracking, rollback and the ZIP writer.
+Twenty-two model tests cover interpretation, all three patterns, chat intents, runs, tool permissions, generated files, changed-file tracking, release snapshots and rollback, the ZIP writer, and that each pattern's exported project answers through its API and passes its own tests.
 
 ## Design notes
 

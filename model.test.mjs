@@ -268,3 +268,60 @@ test("the generated ZIP is a valid archive containing every file", () => {
   for (const f of files) assert.ok(listing.includes(f.path), f.path);
   execFileSync("unzip", ["-tq", file]);
 });
+
+import { mkdirSync, existsSync } from "node:fs";
+import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
+
+test("disabling source access blocks answers everywhere and shows in the trace", () => {
+  const p = createProject("policy app");
+  setTools(p, []);
+  const r = answer(p, "Can I carry over my leave?");
+  assert.equal(r.supported, false);
+  assert.equal(r.blocked, true);
+  assert.equal(r.citation, null);
+  const run = recordRun(p, "leave", r);
+  assert.match(run.steps[1], /disabled/);
+  setTools(p, ["read_source"]);
+  assert.equal(answer(p, "Can I carry over my leave?").supported, true);
+});
+
+test("releases snapshot agents and tools, and rollback restores them", () => {
+  const p = createProject("policy app");
+  addAgent(p, { name: "Summarizer", responsibility: "Summarize the answer" });
+  setTools(p, ["read_source", "send_reply"]);
+  const r1 = publish(p);
+  assert.equal(r1.agents.length, 1);
+  assert.deepEqual(r1.tools, ["read_source", "send_reply"]);
+  addAgent(p, { name: "Router", responsibility: "Escalate to a person" });
+  setTools(p, ["read_source"]);
+  publish(p);
+  assert.equal(p.releases.at(-1).agents.length, 2);
+  rollback(p, r1);
+  assert.equal(p.agents.length, 1);
+  assert.equal(p.agents[0].name, "Summarizer");
+  assert.deepEqual(p.tools, ["read_source", "send_reply"]);
+  assert.equal(p.releases.at(-1).agents.length, 1);
+});
+
+test("the exported project runs: its API answers and its own tests pass for every pattern", () => {
+  for (const archetype of Object.keys(ARCHETYPES)) {
+    const p = createProject("x", false, { archetype });
+    const dir = mkdtempSync(join(tmpdir(), "architect-export-"));
+    for (const f of generateFiles(p)) {
+      mkdirSync(join(dir, dirname(f.path)), { recursive: true });
+      writeFileSync(join(dir, f.path), f.text);
+    }
+    for (const required of ["package.json", "server.mjs", "api/ask.mjs", `app/theme-${p.settings.theme}.css`])
+      assert.ok(existsSync(join(dir, required)), required);
+    const askUrl = pathToFileURL(join(dir, "api/ask.mjs")).href;
+    const q = JSON.stringify(ARCHETYPES[archetype].chips[0][1]);
+    const out = execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", `import(${JSON.stringify(askUrl)}).then(async (m) => console.log(JSON.stringify(await m.ask(${q}))))`],
+      { encoding: "utf8", cwd: dir },
+    );
+    assert.equal(JSON.parse(out).supported, true, archetype);
+    execFileSync(process.execPath, ["--test"], { cwd: dir, encoding: "utf8" });
+  }
+});
