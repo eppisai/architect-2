@@ -94,3 +94,76 @@ test("unchanged new and imported projects have a reviewable initial snapshot to 
     assert.equal(pendingChanges(p).length, 0);
   }
 });
+
+import { interpret, ARCHETYPES, parseTable } from "./model.mjs";
+
+test("interpret reads a brief into a pattern, name and audience", () => {
+  const k = interpret(
+    "My team repeatedly asks questions about our internal policies. Build an app where they can ask a question, get an answer from our handbook, and see the source.",
+  );
+  assert.equal(k.archetype, "knowledge");
+  assert.equal(k.name, "Policy Desk");
+  assert.equal(k.audience, "team");
+  const t = interpret(
+    "Build a support triage app where customers describe a request, it gets routed to billing or engineering, and they can track it.",
+  );
+  assert.equal(t.archetype, "triage");
+  assert.equal(t.name, "Request Triage");
+  assert.equal(t.audience, "public");
+  const i = interpret("Dashboard for weekly sales numbers by region");
+  assert.equal(i.archetype, "insight");
+  assert.equal(i.name, "Sales Insights");
+  const none = interpret("Something completely different");
+  assert.equal(none.archetype, "knowledge");
+  assert.equal(none.confident, false);
+});
+
+test("a chosen pattern overrides the interpretation and drives the sample source", () => {
+  const p = createProject("anything", false, {
+    archetype: "triage",
+    name: "Helpdesk",
+    audience: "public",
+  });
+  assert.equal(p.archetype, "triage");
+  assert.equal(p.name, "Helpdesk");
+  assert.equal(p.settings.audience, "public");
+  assert.equal(p.source, ARCHETYPES.triage.source.text);
+});
+
+test("triage sorts by rule keywords, marks urgency, and follows the unmatched setting", () => {
+  const p = createProject("tickets", false, { archetype: "triage" });
+  const a = answer(p, "I was charged twice for my subscription");
+  assert.equal(a.supported, true);
+  assert.equal(a.team, "Billing");
+  assert.equal(a.priority, "Normal");
+  assert.match(a.citation, /^Billing:/);
+  const b = answer(p, "I can’t log in and it’s urgent");
+  assert.equal(b.team, "Access");
+  assert.equal(b.priority, "High");
+  const none = answer(p, "Where can I park?");
+  assert.equal(none.supported, false);
+  assert.match(none.text, /sent to a person/);
+  settingsChange(p, { unknown: "ask", length: "detailed" }, "x");
+  assert.match(answer(p, "Where can I park?").text, /one more detail/);
+  assert.match(answer(p, "refund please").text, /Suggested reply/);
+});
+
+test("insight ranks, totals and computes growth from the table, and hides rows when citations are off", () => {
+  const p = createProject("sales", false, { archetype: "insight" });
+  const g = answer(p, "Which region grew the most?");
+  assert.match(g.text, /^West grew the most/);
+  assert.equal(g.chart.highlight[0], "West");
+  assert.match(answer(p, "Which region is highest?").text, /^North has the highest/);
+  assert.match(answer(p, "What is the total revenue?").text, /Total Q2 revenue is 485/);
+  assert.equal(answer(p, "What should we do next quarter?").supported, false);
+  settingsChange(p, { citations: false }, "x");
+  assert.equal(answer(p, "total").citation, null);
+  assert.equal(parseTable("a,b\nx,1\nbad").data.length, 1);
+});
+
+test("releases keep their pattern so recipient views render the right app", () => {
+  const p = createProject("sales", false, { archetype: "insight" });
+  const r = publish(p);
+  assert.equal(r.archetype, "insight");
+  assert.match(answer(r, "total").text, /Total/);
+});
