@@ -322,6 +322,15 @@ test("the exported project runs: its API answers and its own tests pass for ever
       { encoding: "utf8", cwd: dir },
     );
     assert.equal(JSON.parse(out).supported, true, archetype);
-    execFileSync(process.execPath, ["--test"], { cwd: dir, encoding: "utf8" });
+    // An inherited test context makes Node skip this independent test suite.
+    const testEnv = { ...process.env };
+    delete testEnv.NODE_TEST_CONTEXT;
+    const testOutput = execFileSync(process.execPath, ["--test", "--test-reporter=tap"], {
+      cwd: dir,
+      encoding: "utf8",
+      env: testEnv,
+    });
+    assert.match(testOutput, /# tests 3\b/, archetype);
+    assert.match(testOutput, /# pass 3\b/, archetype);
   }
 });

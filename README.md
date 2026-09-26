@@ -1,6 +1,6 @@
 # Architect 2.0 — prototype
 
-**Live:** https://eppisai.github.io/architect-2/ · **Source:** this repository
+**Live:** https://architect-2-aman.vercel.app (Vercel) · mirror: https://eppisai.github.io/architect-2/ (GitHub Pages) · **Source:** this repository
 
 A vibe-coding platform for people who don't write code and for developers who do. You describe what people need; Architect reads it into a starting pattern, shows the app as three steps, and lets you shape any step in place. One change flows through the plan, the preview, the agent, the generated code and the release. Developers get the same project as files, runs and environments without leaving the workspace.
 
