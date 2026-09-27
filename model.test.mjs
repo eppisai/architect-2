@@ -334,3 +334,138 @@ test("the exported project runs: its API answers and its own tests pass for ever
     assert.match(testOutput, /# pass 3\b/, archetype);
   }
 });
+
+import {
+  DOMAINS,
+  packFor,
+  detectOps,
+  applyOps,
+  restoreVersion,
+  runChecks,
+  describeOp,
+  normalize,
+  THEMES,
+} from "./model.mjs";
+
+test("any prompt gets a name from its own words and sample content in its own subject", () => {
+  const gym = interpret("a CRM for my gym");
+  assert.equal(gym.name, "Gym CRM");
+  assert.equal(gym.domain, "fitness");
+  assert.equal(interpret("an expense tracker for my team").name, "Expense Tracker");
+  assert.equal(interpret("a booking app for my restaurant").archetype, "triage");
+  const p = createProject("a CRM for my gym");
+  assert.match(p.source, /^Billing:/m);
+  assert.match(p.source, /^Membership:/m);
+  assert.equal(p.chips.length, 3);
+  const k = createProject("an assistant that answers questions for our dental clinic patients");
+  assert.equal(k.archetype, "knowledge");
+  assert.match(answer(k, "Can I move my appointment?").text, /Book or move appointments/);
+});
+
+test("every domain pack's sample questions behave: two answered, one not, for all three engines", () => {
+  for (const domain of Object.keys(DOMAINS))
+    for (const archetype of Object.keys(ARCHETYPES)) {
+      const p = createProject("x", false, { archetype, domain });
+      const pk = packFor(domain, archetype);
+      assert.equal(p.source, pk.text);
+      const c = runChecks(p);
+      assert.equal(c.passed, 3, `${domain}/${archetype}: ${JSON.stringify(c.results)}`);
+    }
+});
+
+test("what the first prompt asks for is part of the first version", () => {
+  const p = createProject(
+    "A help desk where employees ask HR policy questions, get answers with sources, and anything unclear goes to HR on Slack.",
+  );
+  assert.equal(p.name, "Policy Desk");
+  assert.equal(p.agents.length, 1);
+  assert.equal(p.agents[0].channel, "Slack");
+  assert.equal(p.revision, 1);
+  assert.equal(p.versions.length, 1);
+  const dark = createProject("a dark mode FAQ bot with feedback buttons and Google sign-in for our store");
+  assert.equal(dark.settings.theme, "dark");
+  assert.equal(dark.settings.feedback, true);
+  assert.equal(dark.settings.signin, "Google");
+  assert.equal(dark.settings.audience, "team");
+});
+
+test("free-form chat requests become real changes with the files they touch", () => {
+  const p = createProject("policy app");
+  const { ops } = detectOps(p, "add a dark mode and a feedback button under each answer");
+  assert.equal(ops.length, 1);
+  assert.deepEqual(ops[0].change, { theme: "dark", feedback: true });
+  const { files, version } = applyOps(p, ops);
+  assert.equal(p.settings.theme, "dark");
+  assert.ok(files.some((f) => f.path === "app/theme-dark.css" && f.status === "A"));
+  assert.ok(files.some((f) => f.path === "app/app.js" && f.status === "M" && f.add > 0));
+  assert.equal(version.n, 2);
+  assert.ok(changedAreas(p).has("app"));
+  const page = detectOps(p, "add a leaderboard page").ops;
+  assert.equal(page[0].type, "page");
+  assert.equal(page[0].page.name, "Leaderboard");
+  applyOps(p, page);
+  assert.ok(p.pages.some((x) => x.name === "Leaderboard"));
+  assert.match(generateFiles(p).find((f) => f.path === "app/index.html").text, /Leaderboard/);
+  const tone = detectOps(p, "make the agent friendlier and answer in Spanish").ops;
+  assert.deepEqual(tone.map((o) => o.type), ["instructions", "instructions"]);
+  applyOps(p, tone);
+  assert.match(generateFiles(p).find((f) => f.path.startsWith("agents/prompts/")).text, /Reply in Spanish/);
+  assert.equal(detectOps(p, "rename it to Help Hub").ops[0].name, "Help Hub");
+  assert.equal(detectOps(p, "change the headline to Ask HR anything").ops[0].value, "Ask HR anything");
+  assert.equal(detectOps(p, "add a login page").ops[0].change.signin, "Email link");
+  assert.equal(detectOps(p, "make it more fun somehow").ops.length, 0);
+  assert.equal(detectOps(p, "undo that").undo, true);
+  assert.match(describeOp(p, ops[0]), /Dark theme/);
+});
+
+test("restoring a version brings back the whole app state and is itself a new version", () => {
+  const p = createProject("policy app");
+  const first = p.versions[0];
+  applyOps(p, detectOps(p, "add a dark mode, a pricing page and rename it to Help Hub").ops);
+  assert.equal(p.name, "Help Hub");
+  assert.equal(p.settings.theme, "dark");
+  const { version } = restoreVersion(p, first.id);
+  assert.equal(p.name, "Policy Desk");
+  assert.equal(p.settings.theme, "forest");
+  assert.ok(!p.pages.some((x) => x.name === "Pricing"));
+  assert.equal(version.n, 3);
+  assert.match(p.changes.at(-1).reason, /Restored version 1/);
+});
+
+test("releases keep pages, copy and sample questions; rollback restores them", () => {
+  const p = createProject("a CRM for my gym");
+  const r1 = publish(p);
+  applyOps(p, detectOps(p, "add a pricing page and change the headline to Hi there").ops);
+  assert.equal(r1.pages.length, 2);
+  assert.equal(r1.copy.h2, ARCHETYPES.triage.app.h2);
+  rollback(p, r1);
+  assert.equal(p.pages.length, 2);
+  assert.equal(p.copy.h2, ARCHETYPES.triage.app.h2);
+});
+
+test("projects saved by the earlier version are upgraded in place", () => {
+  const old = createProject("policy app");
+  for (const k of ["chips", "copy", "pages", "instructions", "versions", "domain"]) delete old[k];
+  delete old.settings.feedback;
+  normalize(old);
+  assert.equal(old.pages[0].kind, "home");
+  assert.equal(old.versions.length, 1);
+  assert.equal(old.settings.feedback, false);
+  assert.ok(THEMES[old.settings.theme]);
+});
+
+test("an exported project from a domain pack still runs its own tests", () => {
+  for (const [domain, archetype] of [["fitness", "triage"], ["clinic", "knowledge"], ["finance", "insight"]]) {
+    const p = createProject("x", false, { archetype, domain });
+    applyOps(p, detectOps(p, "add a dark mode and feedback buttons").ops);
+    const dir = mkdtempSync(join(tmpdir(), "architect-domain-"));
+    for (const f of generateFiles(p)) {
+      mkdirSync(join(dir, dirname(f.path)), { recursive: true });
+      writeFileSync(join(dir, f.path), f.text);
+    }
+    const testEnv = { ...process.env };
+    delete testEnv.NODE_TEST_CONTEXT;
+    const out = execFileSync(process.execPath, ["--test", "--test-reporter=tap"], { cwd: dir, encoding: "utf8", env: testEnv });
+    assert.match(out, /# pass 3\b/, `${domain}/${archetype}`);
+  }
+});

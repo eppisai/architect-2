@@ -2,699 +2,1079 @@ import {
   STORE,
   clone,
   createProject,
-  settingsChange,
-  undo,
   answer,
   publish,
   recordSource,
-  pendingChanges,
   ARCHETYPES,
   archetypeOf,
   interpret,
-  subjectFor,
   describe,
   slug,
-  chatIntent,
   recordRun,
   envVars,
   frameworkSetup,
   generateFiles,
-  changedAreas,
   rollback,
   addAgent,
   removeAgent,
   TOOLS,
-  setTools,
   addEnv,
+  detectOps,
+  describeOp,
+  applyOps,
+  restoreVersion,
+  runChecks,
+  normalize,
+  THEMES,
+  switchArchetype,
+  committedFiles,
+  diffFiles,
+  checkpoint,
+  pageKind,
 } from "./model.mjs";
 import { zipBytes } from "./zip.mjs";
+
+// ---------- Small helpers ----------
 const app = document.querySelector("#app"),
   modal = document.querySelector("#modal");
 const esc = (s) =>
-  String(s ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ],
-  );
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const uid = () => Math.random().toString(36).slice(2, 10);
+const plural = (n, w, many = w + "s") => `${n} ${n === 1 ? w : many}`;
+const A = (x = p) => archetypeOf(x);
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const ago = (iso) => {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 50) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return plural(Math.round(s / 3600), "hour") + " ago";
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+};
+const ICONS = {
+  arrow: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
+  up: '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
+  plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+  bot: '<rect x="3" y="8" width="18" height="12" rx="3"/><path d="M12 8V4"/><path d="M8.5 14h.01"/><path d="M15.5 14h.01"/>',
+  github:
+    '<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  compass: '<circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-2.12 6.36-6.36 2.12 2.12-6.36 6.36-2.12z"/>',
+  bolt: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  tablet: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/>',
+  phone: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/>',
+  pointer: '<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+  message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/>',
+  spinner: '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  settings: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
+  hash: '<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3 8 21"/><path d="m16 3-2 18"/>',
+  qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M20 14v.01"/><path d="M20 20v.01"/><path d="M17 20h.01"/>',
+  db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+  home: '<path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+};
+const icon = (n, s = 16, cls = "") =>
+  `<svg class="i ${cls}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ""}</svg>`;
+const spinner = (s = 14) => icon("spinner", s, "spin");
+const logo = (s = 24) =>
+  `<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="7" fill="#1F2420"/><path d="M6.5 16.5 12 7l5.5 9.5M8.8 13h6.4" stroke="#FBFAF7" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const googleLogo = `<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>`;
+const btn = (label, action, cls = "btn", extra = "") => `<button type="button" class="${cls}" data-action="${action}" ${extra}>${label}</button>`;
+const arrowBtn = (label, action, cls = "", extra = "") =>
+  `<button type="button" class="btn primary arrow ${cls}" data-action="${action}" ${extra}>${label}<span class="disc">${icon("arrow", 13)}</span></button>`;
+const sw = (change, checked, label, extra = "") =>
+  `<span class="switch"><input type="checkbox" role="switch" data-change="${change}" ${checked ? "checked" : ""} aria-label="${esc(label)}" ${extra}><span></span></span>`;
+const horizon = (band = false, h = 470) => `<svg viewBox="${band ? "0 150 1440 290" : `0 0 1440 ${h}`}" preserveAspectRatio="${band ? "xMidYMid slice" : "xMidYMax slice"}"><rect width="1440" height="${h}" fill="#F4E7D3"/><path d="M0 60 C300 40 700 70 1000 50 C1200 38 1340 52 1440 46" stroke="#F7EEDF" stroke-width="22" fill="none" stroke-linecap="round" opacity=".8"/><path d="M80 120 C380 104 640 128 980 112" stroke="#F0DDC2" stroke-width="14" fill="none" stroke-linecap="round" opacity=".7"/><circle cx="1268" cy="214" r="40" fill="#F6D39E" opacity=".95"/><path d="M0 300 C160 262 300 272 460 288 C620 304 760 256 920 262 C1080 268 1260 292 1440 276 L1440 ${h} L0 ${h}Z" fill="#CFC9DA"/><path d="M140 300 C260 290 380 294 500 302" stroke="#DCD6E6" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M860 276 C960 268 1060 272 1160 282" stroke="#DCD6E6" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M0 350 C200 322 380 334 580 350 C760 364 960 326 1160 334 C1300 340 1380 350 1440 346 L1440 ${h} L0 ${h}Z" fill="#D3D5BA"/><path d="M620 352 C760 344 900 340 1040 342" stroke="#DFE0CA" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M0 392 C240 372 520 384 780 396 C1000 406 1240 388 1440 392 L1440 ${h} L0 ${h}Z" fill="#EADFC8"/><path d="M0 432 C360 418 900 424 1440 432 L1440 ${h} L0 ${h}Z" fill="#FBFAF7"/></svg>`;
+
+// ---------- State ----------
 let db;
 try {
   db = JSON.parse(localStorage.getItem(STORE));
 } catch {}
 if (!db?.projects) db = { projects: [], signedIn: false };
-if (db.signedIn && !db.account)
-  db.account = { name: "Aman", email: "aman@demo.architect", method: "Demo" };
+if (db.signedIn && !db.account) db.account = { name: "Aman", email: "aman@demo.architect", method: "Demo" };
 for (const x of db.projects) {
-  x.archetype ||= "knowledge";
-  for (const r of x.releases || []) r.archetype ||= x.archetype;
+  normalize(x);
+  if (x.stage === "plan" && !x.chat.some((m) => m.kind === "plan" && m.awaiting)) x.stage = "built";
 }
-let p = null,
-  view = "home",
-  selection = "",
-  chatOpen = false,
-  proposal = null,
-  buildStep = 0,
-  buildTimer,
-  previewQuestion = "",
-  previewResult = null,
-  showSource = false,
-  shape = null,
-  readStep = 0,
-  readTimer,
-  auth = { step: "choose", provider: "", email: "" },
-  pending = null,
-  codeFile = "",
-  importFlow = null,
-  publishStep = 0,
-  publishTimer,
-  agentSel = "main",
-  testResult = null,
-  testInput = "";
-let brief =
-  sessionStorage.getItem("architect-draft-brief") ||
-  "My team repeatedly asks questions about our internal policies. Build an app where they can ask a question, get an answer from our handbook, and see the source.";
-const params = new URLSearchParams(location.search),
-  releaseId = params.get("release");
 const save = () => {
   try {
     localStorage.setItem(STORE, JSON.stringify(db));
   } catch {
-    toast("Storage is full. Export your project before leaving.");
+    toast("Browser storage is full. Download your project before continuing.");
   }
 };
 const byId = (id) => db.projects.find((x) => x.id === id);
-const tag = (t, kind = "") => `<span class="tag ${kind}">${esc(t)}</span>`;
-const btn = (t, a, cls = "", extra = "") =>
-  `<button class="${cls}" data-action="${a}" ${extra}>${t}</button>`;
-const A = (x = p) => archetypeOf(x);
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const people = (s) => (s.audience === "team" ? "teammates" : "customers");
-const when = (iso) => new Date(iso).toLocaleString();
-const appUrl = (x = p) => `https://${slug(x.name)}.architect.app`;
-const recipientUrl = (r) => `${location.origin}${location.pathname}?release=${r.id}`;
-const EXAMPLES = [
-  [
-    "Policy assistant",
-    "Turn your handbook into answers people can verify.",
-    "Build an internal policy assistant that answers from our handbook and shows the source.",
-  ],
-  [
-    "Support triage",
-    "Sort incoming requests to the right team with a first reply.",
-    "Build a support triage app where customers describe a request, it gets routed to billing, access or engineering, and they can track it.",
-  ],
-  [
-    "Sales insights",
-    "Ask questions about a sales table and see the rows behind each answer.",
-    "Build a sales dashboard where my team can ask which region grew the most and see the numbers behind it.",
-  ],
+const params = new URLSearchParams(location.search);
+const releaseId = params.get("release"),
+  previewId = params.get("preview");
+
+let p = null;
+const ui = {
+  view: "home",
+  tab: "preview",
+  pop: null,
+  device: "desktop",
+  selecting: false,
+  sel: "",
+  page: "home",
+  console: false,
+  mode: "build",
+  mobile: "chat",
+  mention: false,
+  codeFile: "",
+  agentSel: "main",
+  agentTab: "behavior",
+  testInput: "",
+  testResult: null,
+  q: "",
+  result: null,
+  showSource: false,
+  fb: "",
+  homeTab: "mine",
+  planFirst: false,
+  attachments: [],
+  homeAgents: [],
+  model: "Auto",
+  pubStep: null,
+  lastRelease: null,
+  gitStep: null,
+  domainDraft: false,
+  stick: true,
+};
+let build = null,
+  pubTimer = null,
+  auth = { step: "choose", email: "", busy: "" },
+  pending = null,
+  importFlow = null;
+let brief = sessionStorage.getItem("architect-draft-brief") ?? "";
+
+const TEMPLATES = [
+  ["Policy assistant", "Answers from your handbook, with the source.", "A help desk where employees ask HR policy questions, get answers with sources, and anything unclear goes to HR on Slack."],
+  ["Support inbox", "Sorts requests to the right team with a first reply.", "A support inbox where customers describe a problem, it gets routed to billing, access or engineering with a priority, and they can track it."],
+  ["Sales insights", "Ask which region grew and see the rows behind it.", "A sales dashboard where my team asks which region grew the most and sees the numbers behind it."],
+  ["Gym member CRM", "Member requests reach billing, classes or facilities.", "A CRM for my gym where members send requests and they reach billing, classes or facilities."],
+  ["Clinic patient desk", "Patients ask about appointments and prescriptions.", "An assistant that answers questions for our dental clinic patients about appointments and prescriptions."],
+  ["Restaurant dashboard", "Which dishes are growing, and by how much.", "A dashboard for my restaurant showing which dishes are growing."],
+  ["Student handbook", "Assignments, exams and extensions, answered.", "A student help desk for our university that answers questions about assignments, exams and extensions."],
+  ["Expense tracker", "Team spend by category, with the rows behind it.", "An expense tracker for my team that shows spend by category."],
 ];
-const IMPORT_BRIEF =
-  "Northstar Support: an existing React app with team sign-in and a LangGraph workflow, imported from northstar/support-app.";
+const STUDIO_AGENTS = [
+  ["Policy summarizer", "Summarize the answer", "Ops"],
+  ["Escalation router", "Escalate to a person", "Support"],
+  ["Translator", "Translate the answer", "Localization"],
+];
+const EL_LABELS = { brand: "App name", nav: "Navigation", hero: "Headline", form: "Question form", chips: "Sample questions", answer: "Answer card", source: "Source" };
+
+// ---------- Rendering ----------
 function toast(t) {
   const el = document.querySelector("#toast");
   el.textContent = t;
   el.style.display = "block";
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => (el.style.display = "none"), 4000);
+  toast.timer = setTimeout(() => (el.style.display = "none"), 3600);
 }
-function dialog(title, body, actions = "") {
-  modal.innerHTML = `<div class="row between"><h2>${title}</h2>${btn("×", "close", "quiet", 'aria-label="Close dialog"')}</div>${body}${actions === null ? "" : `<div class="actions">${actions || btn("Close", "close")}</div>`}`;
+function dialog(title, sub, body, actions = "", opts = {}) {
+  modal.className = opts.wide ? "wide" : "";
+  modal.dataset.kind = opts.kind || "";
+  modal.innerHTML = `<div class="dlg"><div class="dlg-head"><div>${opts.logo ? `<div style="margin-bottom:14px">${logo(30)}</div>` : ""}<h2 id="dlg-title">${title}</h2>${sub ? `<p>${sub}</p>` : ""}</div><button type="button" class="dlg-close" data-action="close" aria-label="Close">${icon("x")}</button></div>${body}${actions ? `<div class="dlg-actions">${actions}</div>` : ""}</div>`;
+  modal.setAttribute("aria-labelledby", "dlg-title");
   if (!modal.open) modal.showModal();
 }
-function summary(s) {
-  return describe({ settings: s, archetype: p.archetype });
+const closeModal = () => modal.open && modal.close();
+
+function render() {
+  if (releaseId || previewId) return sharedView();
+  const active = document.activeElement;
+  const focusId = active?.id;
+  const selStart = active?.selectionStart,
+    selEnd = active?.selectionEnd;
+  const keep = {};
+  for (const s of ["#viewport", ".code", ".main-panel", ".tree", ".drawer", ".pop"]) {
+    const el = document.querySelector(s);
+    if (el) keep[s] = el.scrollTop;
+  }
+  const msgs = document.querySelector("#msgs");
+  const msgTop = msgs?.scrollTop;
+  const winY = window.scrollY;
+  document.body.classList.toggle("in-ws", ui.view === "workspace");
+  app.innerHTML = ui.view === "workspace" && p ? workspace() : home();
+  for (const [s, top] of Object.entries(keep)) {
+    const el = document.querySelector(s);
+    if (el) el.scrollTop = top;
+  }
+  const m2 = document.querySelector("#msgs");
+  if (m2) m2.scrollTop = ui.stick ? m2.scrollHeight : msgTop ?? m2.scrollHeight;
+  if (ui.view === "home") window.scrollTo({ top: winY });
+  if (focusId) {
+    const el = document.getElementById(focusId);
+    if (el && el !== document.activeElement) {
+      el.focus({ preventScroll: true });
+      try {
+        if (selStart != null) el.setSelectionRange(selStart, selEnd);
+      } catch {}
+    }
+  }
+  bind();
+  placeInspector();
 }
-function nav(to) {
-  view = to;
-  proposal = null;
-  selection = "";
-  previewResult = null;
-  showSource = false;
-  chatOpen = false;
-  testResult = null;
-  render();
-  window.scrollTo({ top: 0 });
-  if (p) history.replaceState(null, "", `#${p.id}/${view}`);
+
+// ---------- Home ----------
+function thumbVars(themeId) {
+  const t = THEMES[themeId] || THEMES.forest;
+  return `--t-bg:${t.bg};--t-accent:${t.accent};--t-ink:${t.dark ? t.ink : "#2e332e"};--t-line:${t.line};--t-surface:${t.surface}`;
 }
-function openProject(id, to) {
-  proposal = null;
-  previewQuestion = "";
-  showSource = false;
-  chatOpen = false;
-  agentSel = "main";
-  testResult = null;
-  clearInterval(buildTimer);
-  p = byId(id);
-  selection = "";
-  previewResult = null;
-  view = to || (p.stage === "built" ? "app" : "plan");
-  history.replaceState(null, "", `#${p.id}/${view}`);
-  render();
-  window.scrollTo({ top: 0 });
-}
-function protoTag() {
-  return btn("Prototype · what works?", "about", "proto-tag");
-}
-function accountControl() {
-  return db.signedIn
-    ? btn(
-        (db.account?.name || "AM").slice(0, 2).toUpperCase(),
-        "account",
-        "account-icon",
-        'aria-label="Account menu" title="Account"',
-      )
-    : btn("Sign in", "signin", "small");
-}
-function top() {
-  const inProject = p && !["home", "signin", "reading", "shape"].includes(view);
-  return `<header class="top"><div class="row">${btn('<span class="brand"><span class="brandmark">A</span>architect</span>', "home", "quiet")}${inProject ? `<span class="muted">/</span><strong class="project-title">${esc(p.name)}</strong>` : ""}</div><div class="row">${inProject ? `${tag(p.releases.length ? (p.releases.at(-1).revision === p.revision ? "Published snapshot" : "Unpublished changes") : "Draft", "blue")}${btn("Conversation", "toggle-chat", "small mobilechat")}${btn(p.stage === "built" ? "Publish" : "Build this version", p.stage === "built" ? "publish" : "build", "primary small", ["building", "publishing"].includes(view) ? "disabled" : "")}` : ""}${protoTag()}${accountControl()}</div></header>`;
-}
-function projectCard(x) {
-  const last = x.changes.at(-1);
-  return `<div class="project-card"><div><div class="row wrap"><h3 style="margin:0">${esc(x.name)}</h3>${x.releases.length ? tag("Live", "good") : tag("Draft")}</div><small>${x.imported ? "Imported · " : `${A(x).label} · `}${x.stage === "built" ? "Preview ready" : "Plan in progress"} · v${x.revision}<br>Last: ${esc(last ? last.reason : "Created")} · ${when(last ? last.at : x.createdAt)}</small></div>${btn("Continue", "open", "small", `data-id="${x.id}"`)}</div>`;
+const thumb = (themeId) =>
+  `<span class="thumb" style="${thumbVars(themeId)}" aria-hidden="true"><span class="t-top"><span class="t-logo"></span><span class="t-nav"><i></i><i></i><i></i></span></span><span class="t-h"></span><span class="t-p"></span><span class="t-in"><i></i></span><span class="t-cards"><i></i><i></i></span></span>`;
+const TPL_THEMES = ["forest", "ocean", "amber", "plum", "ocean", "amber", "forest", "plum"];
+function projectStatus(x) {
+  if (build?.pid === x.id) return { kind: "ember", dot: "ember", text: "Building…" };
+  const latest = x.releases.at(-1);
+  if (!latest) return { kind: "", dot: "", text: x.imported ? "Imported · draft" : "Draft" };
+  if (latest.revision === x.revision) return { kind: "live", dot: "live", text: "Live" };
+  return { kind: "live", dot: "live", text: "Live · unpublished changes" };
 }
 function home() {
+  const signed = db.signedIn;
   const projects = db.projects.filter((x) => !x.archived);
-  return `${top()}<main class="welcome"><span class="tag blue">Your ideas, made useful</span><h1 style="margin-top:18px">What would you like<br>to build or improve?</h1><p class="muted">Start with what people need. We’ll shape the app, its agents, and how everything works together.</p><div class="promptbox"><label for="brief" class="sr">Describe your app</label><textarea id="brief">${esc(brief)}</textarea><div class="row between wrap"><div class="row">${btn("+ Reference", "reference", "quiet small")}${tag("Example brief")}</div>${btn("Shape this idea ↗", "start", "primary")}</div></div><div class="examples">${btn("↥ Import a project", "import")}${btn("Explore examples", "examples", "quiet")}${btn("Help me choose", "consult", "quiet")}</div><p class="footer-note">Your brief is read into one of three starting patterns you can change. No model is called in this prototype.</p>${
-    db.signedIn
-      ? projects.length
-        ? `<section class="projects"><div class="row between"><h3>Your projects</h3><small>Saved on this browser</small></div>${projects.map(projectCard).join("")}</section>`
-        : ""
-      : `<section class="projects"><div class="panel row between wrap"><div><strong>Have projects here already?</strong><p class="muted" style="margin:4px 0 0">Sign in to see and continue them.</p></div>${btn("Sign in", "signin", "small")}</div></section>`
-  }</main>`;
+  const list = ui.homeTab === "published" ? projects.filter((x) => x.releases.length) : ui.homeTab === "shared" ? [] : projects;
+  const showProjects = signed && projects.length;
+  const cards = showProjects
+    ? list.length
+      ? list
+          .map((x) => {
+            const st = projectStatus(x);
+            return `<button type="button" class="proj" data-action="open" data-id="${x.id}">${thumb(x.settings.theme)}<span><span class="name">${esc(x.name)}</span><span class="meta"><span class="dot ${st.dot}"></span>${st.text} · edited ${ago(x.changes.at(-1)?.at || x.createdAt)}</span></span></button>`;
+          })
+          .join("")
+      : `<div class="empty" style="grid-column:1/-1"><div class="display">${ui.homeTab === "shared" ? "Nothing shared with you yet" : "Nothing published yet"}</div><p>${ui.homeTab === "shared" ? "Projects other people invite you to appear here." : "Publish a project and it shows up here with its live link."}</p></div>`
+    : TEMPLATES.slice(0, 4)
+        .map(([n, d, b], i) => `<button type="button" class="proj" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i])}<span><span class="name">${n}</span><span class="meta">${d}</span></span></button>`)
+        .join("");
+  const agentsPicked = ui.homeAgents.length;
+  return `<div class="home">
+<div class="horizon" aria-hidden="true">${horizon()}</div>
+<header class="home-nav"><div class="row"><button type="button" class="brand" data-action="home" aria-label="Architect home">${logo(26)}<span class="word">architect</span></button><nav aria-label="Main">${btn("Templates", "templates", "")}${btn("Agents", "studio", "")}${btn("How it works", "about", "")}</nav></div>
+<div class="row" style="gap:16px">${signed ? `<span class="credits">${icon("bolt", 14)}1,240 credits</span>${btn(esc(initials()), "pop-account", "avatar", 'aria-label="Account menu"')}` : `${btn("Log in", "signin", "btn quiet")}${btn("Get started", "signin", "btn primary")}`}</div></header>
+${ui.pop === "account" ? accountPop("home") : ""}
+<section class="hero"><h1>What should we build today?</h1><p>Describe it. Architect builds the screens, the agents and the backend, then puts it online.</p></section>
+<form class="composer" id="home-form"><label for="brief" class="sr">Describe what you want to build</label><textarea id="brief" rows="2" placeholder="Describe an app, a workflow or an agent. For example: a help desk that answers HR questions and hands anything unclear to a person.">${esc(brief)}</textarea>
+${ui.attachments.length ? `<div class="attachments">${ui.attachments.map((a, i) => `<span class="attachment">${icon(a.kind === "link" ? "link" : "file", 13)}${esc(a.name)}<button type="button" data-action="remove-attachment" data-i="${i}" aria-label="Remove ${esc(a.name)}">${icon("x", 12)}</button></span>`).join("")}</div>` : ""}
+<div class="composer-tools"><div class="row"><button type="button" class="tool round" data-action="attach" aria-label="Attach a file, screenshot or link">${icon("plus", 17)}</button><button type="button" class="tool ${agentsPicked ? "on" : ""}" data-action="studio">${icon("bot")}${agentsPicked ? plural(agentsPicked, "agent") + " attached" : "Use my agents"}</button><button type="button" class="tool ${ui.planFirst ? "on" : ""} hide-sm" data-action="toggle-plan" aria-pressed="${ui.planFirst}"><span class="mini-switch"></span>Plan first</button></div>
+<div class="row"><label for="builder-model" class="sr">Model</label><select id="builder-model" class="hide-sm model-select" data-change="builder-model">${["Auto", "Claude Sonnet 5", "GPT-5", "Gemini 2.5 Pro"].map((m) => `<option ${ui.model === m ? "selected" : ""}>${m}</option>`).join("")}</select><button type="submit" class="btn primary big arrow">Build it<span class="disc">${icon("arrow", 15)}</span></button></div></div></form>
+<div class="quick">${btn(`${icon("github")}Import from GitHub`, "import", "")}${btn(`${icon("upload")}Upload a ZIP`, "import-zip", "")}${btn(`${icon("grid")}Browse templates`, "templates", "")}${btn(`${icon("compass")}Not sure? Ask the consultant`, "consult", "")}</div>
+<section class="home-section"><div class="head"><div class="row wrap" style="gap:10px 26px;align-items:baseline"><h2>${showProjects ? "Your projects" : "Start from a template"}</h2>${showProjects ? `<div class="tabs-line">${[["mine", "Mine"], ["shared", "Shared with me"], ["published", "Published"]].map(([k, l]) => `<button type="button" data-action="home-tab" data-tab="${k}" class="${ui.homeTab === k ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}</div>${btn(showProjects ? "Start from a template →" : "All templates →", "templates", "link")}</div><div class="proj-grid">${cards}</div></section>
+<footer class="home-footer">Architect 2.0 prototype · ${btn("What’s real in this prototype", "about", "link")}</footer></div>`;
 }
-function signin() {
-  const s = auth.step;
-  const card =
-    s === "email"
-      ? `<h3>Continue with email</h3><form id="email-form"><label for="email">Work email</label><input id="email" type="email" required placeholder="you@company.com" value="${esc(auth.email || "")}" style="width:100%"><div class="row between" style="margin-top:16px">${btn("Back", "auth-choose", "quiet small")}<button class="primary">Send sign-in link</button></div></form><p class="footer-note">Demo account. No email is sent.</p>`
-      : s === "sent"
-        ? `<h3>Check your inbox</h3><p>We sent a sign-in link to <strong>${esc(auth.email)}</strong>. It expires in 15 minutes.</p><div class="row wrap">${btn("Resend link", "auth-resend", "small")}${btn("Use a different email", "auth-email", "quiet small")}</div><div class="callout">Demo: no email can arrive here. Enter the demo code instead.</div><form id="code-form"><label for="code">Demo code</label><input id="code" value="ARCHITECT" style="width:100%"><div class="row between" style="margin-top:16px">${btn("Back", "auth-choose", "quiet small")}<button class="primary">Continue</button></div></form>`
-        : s === "provider"
-          ? `<h3>Choose an account</h3><p class="muted">${esc(auth.provider)} · simulated account chooser</p><div class="stack">${btn("<strong>Aman</strong><br><small>aman@demo.architect</small>", "auth-account", "", 'data-email="aman@demo.architect" style="text-align:left"')}${btn("Use another account", "auth-account", "quiet", 'data-email="you@demo.architect"')}</div><div class="row between" style="margin-top:16px">${btn("Cancel", "auth-choose", "quiet small")}<small>Nothing is sent to ${esc(auth.provider)}.</small></div>`
-          : `<h3>Continue to Architect</h3><div class="stack">${btn("Continue with Google", "auth-provider", "", 'data-provider="Google"')}${btn("Continue with GitHub", "auth-provider", "", 'data-provider="GitHub"')}${btn("Continue with email", "auth-email")}</div><div class="or"><span>or</span></div>${btn("Try the demo workspace", "auth-demo", "primary")}<p class="footer-note">Demo account: no password, nothing sent. Sign-in for the apps you build is configured separately, per app.</p>`;
-  return `${top()}<main class="signin"><div class="two-col"><div><span class="tag blue">Architect</span><h1 style="margin-top:16px">Build an app that does a job.</h1><p class="muted" style="font-size:17px">Describe what people need. Architect shapes the app, its agents and how everything connects, then helps you ship it.</p><div class="panel"><small>Example</small><p style="margin:6px 0 0">“My team asks about leave policy every week.” → <strong>Policy Desk</strong>: ask a question, get an answer, check the source.</p></div>${pending ? `<div class="callout">Your ${pending.action === "import" ? "import" : "idea"} is saved and continues after you sign in.</div>` : ""}</div><div class="panel">${card}</div></div></main>`;
+const initials = () => (db.account?.name || "You").slice(0, 2).toUpperCase();
+
+// ---------- Workspace ----------
+function workspace() {
+  return `<div class="ws" style="position:relative">${topBar()}<div class="ws-body m-${ui.mobile}">${chatPanel()}<main class="canvas" id="canvas">${canvasBody()}</main></div>${workspacePop()}<div class="mobile-switch"><div class="seg">${["chat", "app"].map((k) => `<button type="button" data-action="mobile" data-k="${k}" class="${ui.mobile === k ? "on" : ""}">${k === "chat" ? "Chat" : "App"}</button>`).join("")}</div></div></div>`;
 }
-function reading() {
-  const lines = [
-    [
-      "Understanding what people need",
-      "Reading your brief for who it serves and what they do",
-    ],
-    ["Choosing a starting pattern", "Matching it to a proven app shape"],
-    ["Drafting the steps", "Writing a first version you can shape"],
+function topBar() {
+  const st = projectStatus(p);
+  const tabs = [
+    ["preview", "Preview"],
+    ["code", "Code"],
+    ["agents", "Agents"],
+    ["data", "Data"],
   ];
-  return `${top()}<main class="welcome"><div class="panel" style="max-width:640px;margin:auto"><span class="tag blue">Reading your idea</span><h2 style="margin-top:20px">One moment.</h2><p class="muted">“${esc(shape.brief.slice(0, 180))}${shape.brief.length > 180 ? "…" : ""}”</p><ol class="progress-list">${lines.map(([t, d], i) => `<li class="${i < readStep ? "done" : i === readStep ? "current" : ""}"><span class="progress-icon">${i < readStep ? "✓" : i + 1}</span><div><strong>${t}</strong><small>${d}</small></div></li>`).join("")}</ol><div class="row between"><small>Deterministic interpretation · no model call</small>${btn("Skip", "shape-now", "quiet small")}</div></div></main>`;
+  const gitBehind = p.git.connected && p.git.committedRevision < p.revision;
+  const members = (p.members || []).filter((m) => m.role !== "Owner");
+  return `<header class="bar"><div class="bar-left">${btn(logo(24), "home", "brand", 'aria-label="All projects"')}<span class="slash">/</span><button type="button" class="proj-name" data-action="pop" data-pop="project" aria-haspopup="dialog"><span>${esc(p.name)}</span>${icon("chevron", 14)}</button><span class="status ${st.kind} hide-sm">${st.kind === "ember" ? spinner(12) : `<span class="dot ${st.dot}"></span>`}${st.text}</span></div>
+<div class="seg tabs" role="tablist" aria-label="Views">${tabs.map(([k, l]) => `<button type="button" role="tab" aria-selected="${ui.tab === k}" data-action="tab" data-tab="${k}" class="${ui.tab === k ? "on" : ""}">${l}</button>`).join("")}</div>
+<div class="bar-right"><div class="avatars hide-md">${btn(esc(initials()), "pop-account", "avatar sm", 'aria-label="Account menu"')}${members.slice(0, 2).map((m) => `<span class="avatar sm" title="${esc(m.email)}">${esc(m.email.slice(0, 2).toUpperCase())}</span>`).join("")}</div>
+<button type="button" class="icon-btn" data-action="pop" data-pop="history" aria-label="Version history" title="Version history">${icon("history", 18)}</button>
+<button type="button" class="btn quiet hide-sm" data-action="pop" data-pop="github" aria-label="GitHub">${icon("github", 17)}${p.git.connected ? `<span class="dot ${gitBehind ? "amber" : "live"}"></span>${gitBehind ? "Not pushed" : "Synced"}` : "GitHub"}</button>
+${btn("Share", "pop", "btn hide-sm", 'data-pop="share"')}
+${arrowBtn("Publish", "pop", "", 'data-pop="publish"')}</div></header>`;
 }
-function shapeView() {
-  const read = interpret(shape.brief);
-  const chosen = ARCHETYPES[shape.archetype];
-  return `${top()}<main class="shape"><div class="row between wrap"><span class="tag blue">${read.confident ? "Closest starting pattern" : "No clear match yet · pick a pattern"}</span>${btn("← Edit brief", "home", "quiet small")}</div><h1 style="margin-top:16px">Here’s how I’d start.</h1><p class="muted">“${esc(shape.brief)}”</p><div class="pattern-grid">${Object.values(
-    ARCHETYPES,
-  )
-    .map(
-      (a) =>
-        `<section class="pattern-card ${a.id === shape.archetype ? "selected" : ""}"><div class="row between"><h3>${a.label}</h3>${a.id === read.archetype && read.confident ? tag("Closest match", "blue") : ""}</div><p>${a.blurb}</p><ol class="steps">${a.steps.map((s) => `<li>${s}</li>`).join("")}</ol>${a.id === shape.archetype ? tag("Selected", "good") : btn("Use this pattern", "pick-pattern", "small", `data-archetype="${a.id}"`)}</section>`,
-    )
-    .join(
-      "",
-    )}</div><form id="shape-form" class="panel"><div class="settings-grid"><div><label for="shape-name">App name</label><input id="shape-name" required maxlength="50" value="${esc(shape.name)}"></div><div><label for="shape-audience">Who is it for?</label><select id="shape-audience"><option value="team" ${shape.audience === "team" ? "selected" : ""}>Invited teammates · sign-in required</option><option value="public" ${shape.audience === "public" ? "selected" : ""}>Anyone with the link</option></select></div></div><div class="listrow" style="margin-top:14px"><div><strong>What it will know</strong><p>${chosen.source.name} to start. Replace it with your own ${chosen.source.label.toLowerCase()} once the plan opens.</p></div>${tag("Sample content")}</div><div class="listrow"><div><strong>Agent</strong><p>${chosen.agent.name}: ${chosen.agent.does}</p></div>${tag("Lyzr managed", "blue")}</div><div class="row between wrap" style="margin-top:20px"><small>You can change any of this later.</small><button class="primary">Create the plan</button></div></form></main>`;
+
+// Chat
+function chatPanel() {
+  const sugg = !build && ui.mode === "build" ? suggestions() : [];
+  return `<aside class="chat" aria-label="Chat with Architect"><div class="msgs" id="msgs" aria-live="polite">${p.chat.map((m, i) => renderMsg(m, i)).join("")}</div>
+${sugg.length ? `<div class="suggest">${sugg.map((s) => btn(esc(s), "suggest", "chip", `data-text="${esc(s)}"`)).join("")}</div>` : ""}
+<form class="composer-mini" id="chat-form" style="position:relative">${ui.mention ? mentionMenu() : ""}${ui.sel ? `<span class="ctx">${icon("pointer", 11)}${EL_LABELS[ui.sel] || ui.sel}<button type="button" data-action="clear-sel" aria-label="Remove selection">${icon("x", 12)}</button></span>` : ""}<label class="sr" for="chat-input">Message Architect</label><textarea id="chat-input" rows="2" placeholder="${ui.mode === "plan" ? "Describe it. Architect plans before building." : "Ask for a change, or @ an agent or page"}">${esc(p.unsent || "")}</textarea>
+<div class="tools-row"><button type="button" class="icon-btn" data-action="attach-chat" aria-label="Attach a file, screenshot or link">${icon("clip", 17)}</button><button type="button" class="icon-btn" data-action="mention" aria-label="Mention an agent or page">${icon("at", 17)}</button><div class="seg sm" style="margin-left:4px" role="group" aria-label="Mode">${[["plan", "Plan"], ["build", "Build"]].map(([k, l]) => `<button type="button" data-action="mode" data-k="${k}" class="${ui.mode === k ? "on" : ""}" aria-pressed="${ui.mode === k}">${l}</button>`).join("")}</div>
+${build?.pid === p.id ? `<button type="button" class="send" data-action="stop" aria-label="Stop"><span class="stop"></span></button>` : `<button type="submit" class="send" aria-label="Send">${icon("up", 16)}</button>`}</div></form></aside>`;
 }
-const sections = [
-  [
-    "Build",
-    [
-      ["plan", "◇", "Plan"],
-      ["app", "▣", "App"],
-      ["agents", "⌘", "Agents"],
-      ["data", "▤", "Knowledge"],
-    ],
-  ],
-  [
-    "Developer",
-    [
-      ["code", "{}", "Code"],
-      ["runs", "≡", "Runs"],
-      ["review", "⑂", "Changes"],
-    ],
-  ],
-  [
-    "Ship",
-    [
-      ["deploy", "↗", "Deploy"],
-      ["activity", "◷", "Activity"],
-    ],
-  ],
-];
-function side() {
-  return `<nav class="sidebar" aria-label="Project navigation">${sections.map(([label, items]) => `<small class="navsection">${label}</small>${items.map(([v, i, t]) => btn(`<span class="navicon">${i}</span>${t}`, "nav", v === view ? "active" : "", `data-view="${v}" ${v === view ? 'aria-current="page"' : ""}`)).join("")}`).join("")}<div class="spacer"></div>${btn('<span class="navicon">⚙</span>Project settings', "nav", "secondary", `data-view="settings"`)}${btn('<span class="navicon">←</span>All projects', "home", "secondary")}</nav>`;
+function mentionMenu() {
+  const a = A();
+  const items = [a.agent.name, ...(p.agents || []).map((x) => x.name), ...p.pages.map((x) => x.name + " page")];
+  return `<div class="pop mention" style="top:auto;bottom:calc(100% + 8px);left:0;right:auto;width:260px;padding:8px;gap:0"><div class="menu">${items.map((x) => btn(`${icon(/page$/.test(x) ? "file" : "bot", 15)}${esc(x)}`, "insert-mention", "", `data-text="${esc(x)}"`)).join("")}</div></div>`;
 }
-function chat() {
+function suggestions() {
+  const out = [];
+  const s = p.settings;
+  if (!s.feedback) out.push("Add feedback buttons to answers");
+  if (!(p.agents || []).some((x) => /escalat/i.test(x.name + x.responsibility))) out.push("Hand unanswered questions to a person on Slack");
+  if (s.theme !== "dark") out.push("Try a dark mode");
+  if (!s.signin) out.push("Add Google sign-in");
+  if (p.pages.length < 3) out.push(A().id === "knowledge" ? "Add an About page" : "Add a Contact page");
+  return out.slice(0, 3);
+}
+const aiHead = `<span class="ai-head">${logo(18)}Architect</span>`;
+function renderMsg(m, i) {
+  const prev = p.chat[i - 1];
+  const head = prev && prev.role === "assistant" ? "" : aiHead;
+  if (m.role === "user")
+    return `<div class="msg-user">${m.sel ? `<span class="sel-chip">${icon("pointer", 11)}${esc(m.sel)}</span>` : ""}<span>${esc(m.text)}</span></div>`;
+  if (m.kind === "plan") return `<div class="msg-ai">${head}${planCard(m)}</div>`;
+  if (m.kind === "build") return `<div class="msg-ai">${head}${buildCard(m)}</div>`;
+  if (m.kind === "clarify")
+    return `<div class="msg-ai">${head}<p>${esc(m.text)}</p><div class="options">${m.options.map((o, k) => `<button type="button" data-action="clarify" data-id="${m.id}" data-k="${k}" ${m.chosen != null ? "disabled" : ""}>${m.chosen === k ? icon("check", 14) : icon("right", 14)}${esc(o.label)}</button>`).join("")}</div></div>`;
+  if (m.kind === "proposal")
+    return `<div class="msg-ai">${head}<p>${esc(m.text)}</p><div class="steps">${m.steps.map((s) => `<div class="step todo"><span class="todo-ring"></span><span>${esc(s)}</span></div>`).join("")}</div>${fileChips(m.files)}${m.state ? `<span class="small muted">${m.state === "built" ? "Built. See the steps below." : "Set aside."}</span>` : `<div class="row">${btn("Build this", "proposal-build", "btn primary sm", `data-id="${m.id}"`)}${btn("Not now", "proposal-skip", "btn sm", `data-id="${m.id}"`)}</div>`}</div>`;
+  return `<div class="msg-ai">${head}<p>${esc(m.text)}</p>${m.action ? btn(esc(m.action.label), m.action.do, "btn sm", `data-arg="${esc(m.action.arg || "")}"`) : ""}</div>`;
+}
+function planCard(m) {
   const a = A(),
     s = p.settings;
-  return `<aside class="chat ${chatOpen ? "visible" : ""}" aria-label="Project conversation"><div class="chat-head row between"><h3>Build together</h3>${btn("Close", "toggle-chat", "small mobilechat")}</div><div class="messages">${p.chat
-    .slice(-8)
-    .map(
-      (m) =>
-        `<div class="message ${m.role}"><small>${m.role === "user" ? "You" : "Architect"}</small>${esc(m.text)}</div>`,
-    )
-    .join(
-      "",
-    )}${proposal ? `<div class="pending"><strong>Proposed change</strong><p>${esc(summary({ ...s, ...proposal }))}</p>${btn("Review change", "review-proposal", "small")}</div>` : ""}</div><form class="chat-form" id="chat-form">${selection ? `<div class="context">Selected: ${esc(stepTitle(selection))} ${btn("×", "clear-select", "quiet small", 'aria-label="Clear selection"')}</div>` : ""}<div class="chips"><small>Try an example change</small><div class="row wrap" style="margin-top:7px">${btn(s.length === "short" ? "More detail" : "Less detail", "suggest-short", "chip")}${btn(cap(a.bits.unknown[s.unknown === "ask" ? "explain" : "ask"]), "suggest-ask", "chip")}${!s.citations ? btn(a.settings.citations, "suggest-citations", "chip") : ""}</div></div><label class="sr" for="chat-input">Describe a change</label><textarea id="chat-input" placeholder="Describe a change, e.g. “shorter answers and show sources”">${esc(p.unsent || "")}</textarea><div class="row between"><small>Changes are reviewed before they apply</small><button class="primary small" type="submit" aria-label="Send change request">↑</button></div></form></aside>`;
+  const agents = [a.agent.name, ...(p.agents || []).map((x) => x.name + (x.channel ? ` (${x.channel})` : ""))];
+  const firstBuild = p.chat.find((x) => x.kind === "build" && x.first);
+  const built = firstBuild?.done;
+  const refs = (p.references || []).map((x) => x.name);
+  return `<div class="plan-card"><div class="pc-head">${built ? `<span class="built">${icon("check", 14)}Built in ${firstBuild.secs || 6} s · ${plural(firstBuild.files.length, "file")}</span>` : `<span style="font-weight:600">The plan</span>`}${m.awaiting ? "" : btn("Edit plan", "edit-plan", "link")}</div>
+<dl><dt>Pages</dt><dd>${esc(p.pages.map((x) => x.name).join(", "))}</dd><dt>Agents</dt><dd>${esc(agents.join(", "))}</dd><dt>Data</dt><dd>${esc(p.sourceName)}${p.sourceKind === "sample" ? " (sample)" : ""}</dd><dt>Sign-in</dt><dd>${s.signin ? esc(s.signin) : s.audience === "team" ? "Team sign-in" : "Anyone with the link"}</dd><dt>Look</dt><dd>${esc(THEMES[s.theme]?.label || s.theme)}</dd>${refs.length ? `<dt>References</dt><dd>${esc(refs.join(", "))}</dd>` : ""}</dl>
+<div class="pc-foot"><span>Starting point: ${esc(a.label)}</span>${btn("Change", "switch-start", "link")}</div></div>${m.awaiting ? `<div class="row">${btn("Build this plan", "approve-plan", "btn primary sm", `data-id="${m.id}"`)}${btn("Edit plan", "edit-plan", "btn sm")}</div>` : ""}`;
 }
-const slots = ["Question", "Answer", "Source"];
-const stepTitle = (slot) => A().steps[slots.indexOf(slot)] || slot;
-function plan() {
-  const a = A(),
-    s = p.settings,
-    who = people(s),
-    sample = a.chips[0][1],
-    res = answer(p, sample);
-  return `<div class="canvas-head"><div class="row between"><span class="tag blue">${p.imported ? "Imported project" : "Your first version"}</span>${btn("Undo last settings change", "undo", "quiet small", p.history.length ? "" : "disabled")}</div><h2 style="margin-top:16px">${a.headline}</h2><p>${a.promise(who, a.material)}</p><details style="margin-top:8px;padding:10px 0"><summary>${p.imported ? "Import notes" : "Your original idea"}</summary><p>${p.imported ? `Imported from <code>${esc(p.git.repo)}</code>: React app, team sign-in and a ${esc(p.baselineFramework || "LangGraph")} workflow. Baseline behavior: detailed answers, no source links.` : esc(p.brief)}</p></details></div><div class="row between" style="margin-bottom:12px"><h3 style="margin:0">The experience, step by step</h3><small>Select a step to shape it</small></div><div class="plan-flow">${flowCard("Question", "1", a.steps[0], `<h4>${esc(p.name)}</h4><p>${a.app.h2}</p><div class="mini-input">${esc(sample)}</div><span class="mini-action">${a.app.button}</span>`, a.foot1(who))}${flowCard("Answer", "2", a.steps[1], `<div class="mini-answer">${res.team ? `<div class="mini-status">${esc(res.team)} · ${esc(res.priority)} priority</div>` : ""}${esc(res.text)}${s.citations && res.citation ? `<span class="mini-link">↗ ${esc(a.evidenceLabel(res))}</span>` : ""}</div><p style="margin:10px 0 0">${cap(a.bits.unknown[s.unknown])}.</p>`, a.foot2[s.length])}${flowCard("Source", "3", a.steps[2], `${a.id === "triage" ? `<div class="mini-status">Received ✓ · Sorted${res.team ? " to " + esc(res.team) : ""} ✓ · Reply drafted</div>` : ""}<h4>${s.citations ? a.app.evidence : a.app.evidenceOff}</h4><p class="source-quote" style="white-space:pre-line">${esc(res.citation || "No supporting detail is displayed for this answer.")}</p><span class="mini-link">${s.citations ? a.app.inspect : "Select to change this"}</span>`, a.foot3[s.citations])}</div>${selection ? editor() : ""}<div class="decision-row"><div class="decision"><div class="row between"><h4>Who is this for?</h4>${btn("Change", "access", "quiet small")}</div><p>${s.audience === "team" ? "Your team · sign-in required" : "Anyone with the link · no sign-in"}.</p></div><div class="decision"><div class="row between"><h4>What will it know?</h4>${btn("Manage", "nav", "quiet small", 'data-view="data"')}</div><p>${esc(p.sourceName)} · ${p.sourceKind === "sample" ? "example data" : "local text"}.</p></div></div>${p.imported ? `<div class="callout">Original import: React, team sign-in and ${esc(p.baselineFramework || "LangGraph")}. Current agent framework: ${esc(s.framework)}. Setup changes are recorded in Changes.</div>` : ""}<details><summary>Agent, framework and technical details</summary><p>One ${a.agent.name} ${a.agent.does.charAt(0).toLowerCase() + a.agent.does.slice(1)}${(p.agents || []).length ? ` Then ${p.agents.map((x) => `${esc(x.name)} (${esc(x.responsibility.toLowerCase())})`).join(", ")}.` : ""} Current setup: <strong>${esc(s.framework)}</strong> · ${esc(frameworkSetup(p).status)}.</p><div class="row wrap">${btn("Open agent setup", "nav", "small", 'data-view="agents"')}${btn("View generated code", "nav", "small", 'data-view="code"')}</div></details><div class="build-footer"><div><strong>You can change this as you go.</strong><p class="muted" style="font-size:13px;margin:5px 0">Example content is ready. Live integrations can be connected later.</p></div>${btn(p.stage === "built" ? "Try this version" : "Build this version", p.stage === "built" ? "preview" : "build", "primary")}</div>`;
-}
-function flowCard(target, n, title, visual, foot) {
-  return `<section class="flow-card ${selection === target ? "selected" : ""}"><button data-action="select" data-target="${target}" aria-pressed="${selection === target}"><span class="stepnum">${n} / 3</span>${esc(title)} <span style="float:right;color:#8194ae">↗</span></button><div class="mini">${visual}</div><div class="flow-foot">${foot}</div></section>`;
-}
-function editor() {
-  const a = A(),
-    s = p.settings,
-    L = a.settings;
-  if (selection === "Question")
-    return `<section class="editor"><div class="editor-top"><div><h3>Make the first impression yours</h3><p class="muted">The app name carries into preview and future releases.</p></div>${btn("Close", "clear-select", "quiet small")}</div><form id="name-form"><label for="project-name">App name</label><input id="project-name" required maxlength="50" value="${esc(p.name)}"> <button class="primary small">Save name</button></form></section>`;
-  if (selection === "Source")
-    return `<section class="editor"><div class="editor-top"><h3>Show what the answer is based on</h3>${btn("Close", "clear-select", "quiet small")}</div><p>${a.app.evidence} appears next to each result when enabled. Current source: ${esc(p.sourceName)}.</p>${btn("Edit behavior and evidence", "select", "small", 'data-target="Answer"')} ${btn("Open knowledge", "nav", "small", 'data-view="data"')}</section>`;
-  const select = (id, def) =>
-    `<select id="${id}">${def.options.map(([v, l]) => `<option value="${v}" ${s[id] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
-  return `<section class="editor"><div class="editor-top"><div><h3>How should ${a.steps[1].toLowerCase()} behave?</h3><p class="muted" style="font-size:13px">Powered by your ${a.agent.name}. Changes apply across the plan, app, agent and generated code.</p></div>${btn("Close", "clear-select", "quiet small")}</div><form id="behavior-form"><div class="settings-grid"><div><label for="length">${L.length.label}</label>${select("length", L.length)}</div><div><label for="unknown">${L.unknown.label}</label>${select("unknown", L.unknown)}</div></div><label class="checkrow"><input type="checkbox" id="citations" ${s.citations ? "checked" : ""}> ${L.citations}</label><div class="row between" style="margin-top:18px"><small>Review before applying. You can undo.</small><button class="primary small" type="submit">Review change</button></div></form></section>`;
-}
-function progressPanel(tagText, title, intro, names, step, footer) {
-  return `<div class="panel" style="max-width:760px;margin:35px auto"><span class="tag blue">${tagText}</span><h2 style="margin-top:20px">${title}</h2><p class="muted">${intro}</p><ol class="progress-list">${names.map(([t, d], i) => `<li class="${i < step ? "done" : i === step ? "current" : ""}"><span class="progress-icon">${i < step ? "✓" : i + 1}</span><div><strong>${t}</strong><small>${esc(d)}</small></div></li>`).join("")}</ol>${footer}</div>`;
-}
-function building() {
-  const a = A();
-  return progressPanel(
-    "Preparing your prototype",
-    "Your plan is becoming an app.",
-    "This local demonstration assembles the example screens and the choices you made.",
-    [
-      ["Prepare the screens", a.steps.join(", ") + " views"],
-      ["Wire the example workflow", `Connect your ${a.agent.name} with the current settings`],
-      ["Prepare the preview", "Make your configured example app available"],
-    ],
-    buildStep,
-    `<div class="row between">${btn(buildStep >= 3 ? "Open your app" : "Pause build", buildStep >= 3 ? "preview" : "pause-build", buildStep >= 3 ? "primary" : "")}<small>No external build is running</small></div><div class="callout"><strong>While you wait</strong><p style="margin:5px 0">Try an input your app can handle, and one it cannot. Both are part of a useful app.</p></div>`,
-  );
-}
-function publishing() {
-  return progressPanel(
-    "Publishing",
-    "Releasing a version people can use.",
-    "Freezing the current draft into a snapshot. Later edits stay in your draft.",
-    [
-      ["Freeze the snapshot", `Settings, source and name at draft v${p.revision}`],
-      ["Apply access settings", p.settings.audience === "team" ? "Team sign-in required" : "Anyone with the link"],
-      ["Release to production", `${appUrl()} · simulated`],
-    ],
-    publishStep,
-    `<div class="row between"><small>No external deployment is running</small></div>`,
-  );
-}
-function chart(c) {
-  const max = Math.max(...c.data.map((d) => d.values.at(-1)), 1);
-  return `<div class="bars">${c.data.map((d) => `<div class="bar-row ${c.highlight.includes(d.label) ? "hi" : ""}"><span>${esc(d.label)}</span><div class="bar"><i style="width:${Math.round((d.values.at(-1) / max) * 100)}%"></i></div><b>${d.values.at(-1)}</b></div>`).join("")}<small>${esc(c.header.at(-1))}</small></div>`;
-}
-function resultCard(target, a, r, recipient) {
-  const handoffs = (target.agents || []).filter((x) => x.enabled !== false);
-  return `<div class="answer ${selection === "Answer" ? "selected-answer" : ""}"><div class="row between"><strong>${r.blocked ? "Setup needed" : r.supported ? a.app.found : a.app.missing}</strong>${!recipient ? btn("Edit behavior", "edit-behavior", "quiet small") : ""}</div>${r.team ? `<div class="row" style="margin-top:10px">${tag(r.team, "blue")}${tag(r.priority + " priority", r.priority === "High" ? "warn" : "")}</div>` : ""}<p style="margin-top:12px">${esc(r.text)}</p>${r.chart ? chart(r.chart) : ""}${r.citation ? btn(showSource ? "Hide" : a.app.view, "citation", "quiet small") : ""}${showSource && r.citation ? `<div class="source-quote" style="margin-top:15px"><strong>${esc(target.sourceName)}</strong><p style="margin:8px 0;white-space:pre-line">${esc(r.citation)}</p><small>${target.sourceKind === "sample" ? "Synthetic example content" : "Local source text"}</small></div>` : ""}${handoffs.length && !recipient ? `<p class="footer-note">Then: ${handoffs.map((x) => `${esc(x.name)} · ${esc(x.responsibility.toLowerCase())}`).join(" → ")} (configured, not run)</p>` : ""}</div>`;
-}
-function sampleApp(target = p, recipient = false) {
-  const a = A(target),
-    s = target.settings,
-    result = previewResult;
-  return `<section class="sample-app ${s.theme === "ocean" ? "ocean" : ""}"><header><strong>${esc(target.name)}</strong><small>${s.audience === "team" ? "Team workspace" : "Open workspace"}</small></header><div class="app-content"><h2>${a.app.h2}</h2><p>${a.app.intro}</p><form id="question-form"><label class="sr" for="question">${a.app.placeholder}</label><textarea id="question" placeholder="${a.app.placeholder}" required>${esc(previewQuestion)}</textarea><div class="row between" style="margin-top:10px"><small>Deterministic example · no live model</small><button class="primary small">${a.app.button}</button></div></form><div class="row wrap" style="margin-top:15px">${a.chips.map(([l, q]) => btn(l, "sample-question", "small", `data-q="${esc(q)}"`)).join("")}</div>${result ? resultCard(target, a, result, recipient) : ""}</div></section>`;
-}
-function preview() {
-  if (p.stage !== "built")
-    return `<div class="panel"><h2>Start with a version you understand.</h2><p>Review the plan, then build the interactive example.</p>${btn("Review the plan", "nav", "primary", 'data-view="plan"')}</div>`;
-  return `<div class="canvas-head row between wrap"><div><h2>Your app, ready to try</h2><p style="margin:0">Try it, inspect what it used, then shape the behavior. Each input is recorded in Runs.</p></div><div class="row">${btn("Appearance", "appearance", "small")}${btn("Edit behavior", "edit-behavior", "small")}</div></div>${p.imported ? `<div class="callout">Imported example: React + existing sign-in + ${esc(p.baselineFramework || "LangGraph")}. Your original stack remains visible in agent setup.</div>` : ""}<div class="app-frame"><div class="frame-bar"><span>${esc(p.name)} / preview</span><span>Draft v${p.revision} · ${p.sourceKind === "sample" ? "Example data" : "Local data"}</span></div>${sampleApp()}</div>${selection === "Answer" ? editor() : ""}<p class="footer-note">Sample inputs use keyword matching against local source text. This demonstrates the flow, not model quality.</p>`;
-}
-function agents() {
-  const a = A(),
-    s = p.settings,
-    setup = frameworkSetup(p),
-    extra = p.agents || [],
-    sel = extra.find((x) => x.id === agentSel),
-    tools = p.tools || ["read_source"];
-  const list = `<div><button class="agent-item ${!sel ? "active" : ""}" data-action="agent-select" data-id="main"><strong>${a.agent.name}</strong><small>${a.agent.job}<br>Used by: ${a.steps[0]}</small></button>${extra.map((x) => `<button class="agent-item ${sel?.id === x.id ? "active" : ""}" data-action="agent-select" data-id="${x.id}"><strong>${esc(x.name)}</strong><small>${esc(x.responsibility)}<br>${esc(x.trigger)}</small></button>`).join("")}${btn("+ Add agent", "add-agent", "small", 'style="margin-top:15px"')}</div>`;
-  const head = `<div class="canvas-head"><h2>Agents that do a clear job</h2><p>Start with what the app needs. Open implementation details when you need them.</p></div>`;
-  if (sel)
-    return `${head}<div class="agent-layout">${list}<div><div class="panel"><div class="row between"><h3>${esc(sel.name)}</h3>${tag(sel.status, /not verified|needs/i.test(sel.status) ? "warn" : "")}</div><div class="listrow"><div><strong>Responsibility</strong><p>${esc(sel.responsibility)}</p></div></div><div class="listrow"><div><strong>Runs</strong><p>${esc(sel.trigger)}</p></div></div><div class="listrow"><div><strong>Origin</strong><p>${esc(sel.origin)}${sel.entry ? ` · <code>${esc(sel.entry)}</code>` : ""}</p></div></div><div class="listrow"><div><strong>Handoff</strong><p>${a.agent.name} → ${esc(sel.name)}. Visible in Runs, the generated prompt and the app’s result card.</p></div>${btn("See in Runs", "nav", "small", 'data-view="runs"')}</div><div class="row wrap" style="margin-top:14px">${btn("Remove agent", "remove-agent", "danger small", `data-id="${sel.id}"`)}</div></div></div></div>`;
-  return `${head}<div class="agent-layout">${list}<div><div class="panel"><div class="row between"><h3>${a.agent.name}</h3>${tag(s.framework, "blue")}</div><p>${a.agent.does}</p><div class="listrow"><div><strong>Behavior</strong><p>${esc(summary(s))}</p></div>${btn("Edit", "edit-behavior", "small")}</div><div class="listrow"><div><strong>Knowledge</strong><p>${esc(p.sourceName)} · ${p.sourceKind === "sample" ? "sample" : "local"}</p></div>${btn("Manage", "nav", "small", 'data-view="data"')}</div><div class="listrow"><div><strong>Used in your app</strong><p>${a.agent.used}</p></div>${btn("Try it", "preview", "small")}</div></div>${selection === "Answer" ? editor() : ""}<div class="panel"><h3>Tools and actions</h3><p class="muted">What this agent is allowed to do. Turn off source reading and the app answers with a setup message instead; actions stay off until you enable them.</p><form id="tools-form">${TOOLS.map(([id, label]) => `<label class="checkrow" style="margin:8px 0"><input type="checkbox" name="tool" value="${id}" ${tools.includes(id) ? "checked" : ""}> ${label}${id !== "read_source" ? ' <small class="muted">· demo action, not executed</small>' : ""}</label>`).join("")}<div style="margin-top:14px"><button class="primary small">Save tools</button></div></form></div><div class="panel"><h3>Test this agent</h3><form id="test-form"><label for="test-input">Input</label><textarea id="test-input" rows="2">${esc(testInput || a.chips[0][1])}</textarea><div class="row between" style="margin-top:10px"><small>Runs the deterministic example and records it in Runs</small><button class="primary small">Run test</button></div></form>${testResult ? `<div class="source-quote" style="margin-top:16px"><strong>${testResult.supported ? "Output" : "No match"}</strong><p style="margin:6px 0">${esc(testResult.text)}</p><ol class="trace">${testResult.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div>` : ""}</div><div class="panel"><div class="row between"><h3>Framework and model</h3>${tag(setup.status, /needs|not/i.test(setup.status) ? "warn" : "good")}</div><p class="muted">Keep your preferred stack. The prototype records this setup and generates matching scaffold files; it does not run these frameworks.</p><form id="framework-form"><label for="framework">Agent framework</label><select id="framework">${["Lyzr managed", "LangGraph", "CrewAI", "OpenAI Agents SDK", "Custom framework"].map((x) => `<option ${s.framework === x ? "selected" : ""}>${x}</option>`).join("")}</select><label for="custom-framework">Custom framework or entry point (optional)</label><input id="custom-framework" value="${esc(s.customFramework || "")}" placeholder="For example: agents/policy.py"><label for="model">Model configuration</label><select id="model">${["Managed default", "OpenAI · bring your key", "Anthropic · bring your key"].map((x) => `<option ${s.model === x ? "selected" : ""}>${x}</option>`).join("")}</select><div style="margin-top:18px"><button class="primary small">Save setup</button></div></form><div class="callout"><strong>${esc(s.framework)} setup</strong> · entry <code>${esc(setup.entry)}</code> · ${esc(setup.runtime)}<ol style="margin:8px 0 0;padding-left:18px">${setup.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>${p.imported ? `<p style="margin:8px 0 0">Original import framework: ${esc(p.baselineFramework || "LangGraph")}.</p>` : ""}</div><div class="row wrap">${btn("View generated agent file", "code-open", "small", `data-path="${esc(setup.entry)}"`)}${btn("Environment variables", "nav", "small", 'data-view="settings"')}</div></div></div></div>`;
-}
-function data() {
-  const a = A();
-  return `<div class="canvas-head"><h2>Give your app something to know.</h2><p>Start with sample content, or edit the local source. Keep data setup separate from the app’s appearance.</p></div><div class="panel"><div class="row between"><h3>${esc(p.sourceName)}</h3>${tag(p.sourceKind === "sample" ? "Sample content" : "Local content")}</div><form id="source-form"><label for="source-name">Source name</label><input id="source-name" required value="${esc(p.sourceName)}"><label for="source-text">${a.source.label}</label><textarea id="source-text" rows="9">${esc(p.source)}</textarea><p class="footer-note">${a.source.hint}</p><div class="row between wrap"><label class="quiet" style="margin:0">Import local .txt or .csv <input id="source-file" type="file" accept=".txt,.csv,text/plain,text/csv" style="max-width:230px"></label><button class="primary small">Save source</button></div></form></div><div class="panel"><h3>Connect where your ${people(p.settings) === "customers" ? "data lives" : "team works"}</h3>${a.source.connectors.map((x) => `<div class="listrow"><div><strong>${x}</strong><p>${p.connections?.includes(x) ? "Demo setup saved · no live data access" : "Not connected"}</p></div>${btn(p.connections?.includes(x) ? "Review" : "Set up", "connect-source", "small", `data-source="${x}"`)}</div>`).join("")}</div>`;
-}
-function code() {
-  const files = generateFiles(p),
-    changed = changedAreas(p);
-  if (!files.some((f) => f.path === codeFile)) codeFile = files[0].path;
-  const f = files.find((x) => x.path === codeFile);
-  const tree = files
-    .map(
-      (x) =>
-        `<button class="file ${x.path === codeFile ? "active" : ""}" data-action="code-file" data-path="${esc(x.path)}"><span>${esc(x.path)}</span>${changed.has(x.area) ? '<i class="dot-changed" title="Changed since last commit"></i>' : ""}</button>`,
-    )
+function buildCard(m) {
+  const active = build?.msgId === m.id;
+  const at = active ? build.step : m.done ? m.steps.length : m.paused ?? m.stoppedAt ?? m.steps.length;
+  const steps = m.steps
+    .map((s, k) => {
+      if (k < at) return `<div class="step">${icon("check", 14, "add")}<span>${esc(s)}</span></div>`;
+      if (active && k === at) return `<div class="step current">${spinner(14)}<span>${esc(s)}</span></div>`;
+      return `<div class="step todo"><span class="todo-ring"></span><span>${esc(s)}</span></div>`;
+    })
     .join("");
-  return `<div class="canvas-head row between wrap"><div><h2>Your project as code.</h2><p style="margin:0">Every file is generated from the plan and settings. Change either side; Architect keeps them together.</p></div><div class="row wrap">${btn("Copy file", "copy-file", "small")}${btn("Download source (.zip)", "download-zip", "primary small")}</div></div><div class="code-layout"><nav class="filetree" aria-label="Files">${tree}<p class="footer-note">${changed.size ? `${changed.size} area${changed.size === 1 ? "" : "s"} changed since the last demo commit.` : "Matches the last demo commit."}</p></nav><div class="codepane"><div class="frame-bar"><span>${esc(codeFile)}</span><span>${changed.has(f.area) ? tag("Changed", "warn") : tag("Committed")}</span></div><pre class="codeblock code">${esc(f.text)}</pre></div></div><p class="footer-note">The archive contains exactly these files. Framework files are scaffolds for ${esc(p.settings.framework)}; runtime execution is not part of this prototype. Editing files in place is a planned developer feature.</p>`;
+  const latest = p.versions.at(-1)?.id;
+  const end = m.cancelled
+    ? `<span class="small muted">Stopped. Nothing changed.</span>`
+    : m.paused != null && !active
+      ? `<div class="row"><span class="small muted">Paused.</span>${btn("Resume", "resume-build", "btn sm", `data-id="${m.id}"`)}</div>`
+      : "";
+  return `${m.intro ? `<p>${esc(m.intro)}</p>` : ""}<div class="steps">${steps}</div>${m.done ? fileChips(m.files) : ""}${end}${m.done && m.versionN ? `<div class="version-line">Version ${m.versionN}${m.versionId && m.versionId !== latest ? btn("Restore", "restore", "", `data-id="${m.versionId}"`) : ""}</div>` : ""}`;
 }
-function runs() {
-  const list = p.runs || [];
-  return `<div class="canvas-head"><h2>What the agent actually did.</h2><p>Every preview input and agent test is recorded with the steps taken and the settings in force. Runs are local and deterministic.</p></div>${
-    list.length
-      ? list
-          .map(
-            (r, i) =>
-              `<details class="panel run" ${i === 0 ? "open" : ""}><summary><span class="row between wrap"><span><strong>${esc(r.input)}</strong><br><small>${when(r.at)} · v${r.revision} · ${r.ms} ms local</small></span>${tag(r.supported ? "Answered" : "No match", r.supported ? "good" : "warn")}</span></summary><ol class="trace">${r.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol><div class="source-quote"><strong>Output</strong><p style="margin:6px 0 0">${esc(r.output)}</p></div><div class="row" style="margin-top:12px">${btn("Re-run with current settings", "rerun", "small", `data-input="${esc(r.input)}"`)}</div></details>`,
-          )
-          .join("")
-      : `<div class="panel empty">No runs yet. Try an input in the App preview or test the agent.</div>`
-  }`;
+function fileChips(files = []) {
+  if (!files.length) return "";
+  const shown = files.slice(0, 4);
+  return `<div class="files">${shown.map((f) => `<button type="button" class="file-chip" data-action="code-open" data-path="${esc(f.path)}" title="${esc(f.path)}">${esc(f.path.split("/").pop())}${f.add ? `<span class="add">+${f.add}</span>` : ""}${f.del ? `<span class="del">−${f.del}</span>` : ""}</button>`).join("")}${files.length > 4 ? btn(`+${files.length - 4} more`, "tab", "file-chip", 'data-tab="code"') : ""}</div>`;
 }
-function configDiff(before, after) {
-  const labels = {
-    length: A().settings.length.label,
-    unknown: A().settings.unknown.label,
-    citations: A().settings.citations,
-    audience: "App audience",
-    framework: "Framework",
-    model: "Model",
-    customFramework: "Entry point",
-    theme: "Theme",
-  };
-  const changed = Object.keys(after).filter((k) => before[k] !== after[k]);
-  return `<div class="diff"><div><strong>Before</strong>${changed.map((k) => `<p>${labels[k] || k}: ${esc(before[k] ?? "Not set")}</p>`).join("")}</div><div><strong>After</strong>${changed.map((k) => `<p>${labels[k] || k}: ${esc(after[k] ?? "Not set")}</p>`).join("")}</div></div>`;
+
+// Canvas
+function canvasBody() {
+  if (ui.tab === "code") return codePane();
+  if (ui.tab === "agents") return agentsPane();
+  if (ui.tab === "data") return dataPane();
+  return previewPane();
 }
-function review() {
-  const changes = pendingChanges(p),
-    changed = changedAreas(p),
-    files = generateFiles(p).filter((f) => changed.has(f.area));
-  return `<div class="canvas-head"><h2>Understand what changed.</h2><p>Review the result, then decide what belongs in your repository.</p></div><div class="panel"><div class="row between"><h3>GitHub</h3>${tag(p.git.connected ? "Demo connection" : "Not connected", p.git.connected ? "good" : "")}</div>${p.git.connected ? `<div class="row between wrap"><div><strong>${esc(p.git.repo)}</strong><p class="muted">Branch: <code>${esc(p.git.branch)}</code></p></div>${btn("Change branch", "branch", "small")}</div><div class="row wrap">${tag("Working version " + p.revision)}${tag("Committed " + p.git.committedRevision)}${tag("Synced " + p.git.syncedRevision)}</div>` : `<p>Choose a repository and branch. This demonstration will show connection, commit and sync states without accessing GitHub.</p>${btn("Connect GitHub", "github", "primary small")}`}</div><div class="panel"><div class="row between"><h3>${changes.length ? "Changes to review" : "No uncommitted changes"}</h3>${p.history.length ? btn("Undo last settings change", "undo", "small") : ""}</div>${p.imported ? '<p class="muted">Preserved from import: React UI, existing sign-in and original framework baseline.</p>' : ""}${changes.length ? changes.map((c) => `<div class="sectionline"><strong>${esc(c.reason)}</strong><small> · v${c.revision}</small>${c.before ? `${configDiff(c.before, c.after)}` : ""}</div>`).join("") : '<p class="muted">The current configuration matches your latest local demo commit.</p>'}${files.length ? `<details><summary>Files affected (${files.length})</summary><ul class="filelist">${files.map((f) => `<li>${btn(esc(f.path), "code-open", "link-button", `data-path="${esc(f.path)}"`)}</li>`).join("")}</ul></details>` : ""}<details><summary>Configuration represented by this change</summary><pre class="codeblock">${esc(JSON.stringify({ archetype: p.archetype, ...p.settings }, null, 2))}</pre></details><div class="row wrap">${btn("Check this version", "check", "small")}${btn("Commit changes", "commit", "primary small", !p.git.connected || !changes.length ? "disabled" : "")}${btn("Sync to GitHub", "sync", "small", !p.git.connected || p.git.committedRevision <= p.git.syncedRevision ? "disabled" : "")}</div>${p.check ? `<p class="footer-note">Local configuration check v${p.check.revision}: ${esc(p.check.result)}${p.check.revision !== p.revision ? " · stale, run again for this draft" : ""}. No production tests executed.</p>` : ""}</div>`;
+function firstBuildLevel() {
+  const m = p.chat.find((x) => x.kind === "build" && x.first);
+  if (!m) return p.chat.some((x) => x.kind === "plan" && x.awaiting) ? 0 : 99;
+  if (m.done) return 99;
+  const at = build?.msgId === m.id ? build.step : m.paused ?? 0;
+  return Math.round((at / m.steps.length) * 100);
 }
-function deploy() {
-  const latest = p.releases.at(-1),
-    url = appUrl(),
-    upToDate = latest && latest.revision === p.revision;
-  return `<div class="canvas-head"><h2>Ship it to people.</h2><p>Preview is your draft. Production is the last release. Publishing freezes a snapshot; later edits stay in the draft until you publish again.</p></div><div class="two-col"><div class="panel"><div class="row between"><h3>Preview</h3>${tag("Draft v" + p.revision, "blue")}</div><p class="muted">Latest build of your draft, visible only to you.</p>${btn(p.stage === "built" ? "Open preview" : "Build first", p.stage === "built" ? "preview" : "build", "small")}</div><div class="panel"><div class="row between"><h3>Production</h3>${latest ? tag(`Release ${latest.number} · v${latest.revision}`, "good") : tag("Not published")}</div>${latest ? `<p class="muted">${esc(describe(latest))}${(latest.agents || []).length ? ` · ${latest.agents.length} extra agent${latest.agents.length === 1 ? "" : "s"}` : ""}</p><div class="row wrap"><a class="button-link" target="_blank" rel="noopener" href="?release=${latest.id}">Open released app ↗</a>${btn("Copy link", "copy-link", "small", `data-link="${esc(recipientUrl(latest))}"`)}</div><p class="footer-note">The link works in this browser only. Production address would be <code>${esc(url)}</code> ${btn("copy simulated address", "copy-sim", "link-button", `data-link="${esc(url)}"`)}</p>` : `<p class="muted">Publish to create a working recipient view and a release record.</p>`}<div style="margin-top:12px">${btn(upToDate ? "Production is up to date" : latest ? "Publish update" : "Publish", "publish", "primary small", upToDate ? "disabled" : "")}</div></div></div><div class="panel"><h3>Releases</h3>${p.releases.length ? p.releases.slice().reverse().map((r) => `<div class="listrow"><div><strong>Release ${r.number} · v${r.revision}</strong><p>${when(r.at)} · ${esc(describe(r))}${(r.agents || []).length ? ` · agents: ${esc(r.agents.map((x) => x.name).join(", "))}` : ""}${r.tools && r.tools.length !== 1 ? ` · tools: ${esc(r.tools.join(", ") || "none")}` : ""}</p></div><div class="row wrap">${r === latest ? tag("Live", "good") : tag("Superseded")}<a target="_blank" rel="noopener" href="?release=${r.id}">Open ↗</a>${btn("Deploy log", "deploy-log", "quiet small", `data-id="${r.id}"`)}${r !== latest ? btn("Roll back", "rollback", "small", `data-id="${r.id}"`) : ""}</div></div>`).join("") : '<p class="muted">No releases yet.</p>'}</div><div class="panel"><div class="row between"><h3>Custom domain</h3>${p.domain ? tag(p.domain.status === "verified" ? "Verified (demo)" : "Pending DNS · simulated", p.domain.status === "verified" ? "good" : "warn") : tag("Not set")}</div>${p.domain ? `<p><strong>${esc(p.domain.name)}</strong></p><p class="muted">Add a CNAME record pointing <code>${esc(p.domain.name)}</code> to <code>apps.architect.app</code>, then verify. No DNS is changed by this prototype.</p><div class="row wrap">${p.domain.status !== "verified" ? btn("Verify", "verify-domain", "small") : ""}${btn("Remove", "remove-domain", "quiet small")}</div>` : `<form id="domain-form" class="row wrap"><label class="sr" for="domain">Domain</label><input id="domain" placeholder="help.yourcompany.com" pattern="[a-z0-9.\\-]+\\.[a-z]{2,}" required style="min-width:260px"><button class="primary small">Add domain</button></form><p class="footer-note">Validation only. No DNS is changed.</p>`}</div>`;
+function previewPane() {
+  const page = p.pages.find((x) => x.id === ui.page) || p.pages[0];
+  const changing = build?.pid === p.id && !p.chat.find((x) => x.id === build.msgId)?.first;
+  const runs = (p.runs || []).length;
+  const lvl = firstBuildLevel();
+  return `<div class="canvas-pad"><div class="browser"><div class="browser-bar">
+<button type="button" class="icon-btn" data-action="app-page" data-page="${p.pages[0]?.id}" aria-label="Back to the first page">${icon("left", 16)}</button><button type="button" class="icon-btn" data-action="app-refresh" aria-label="Refresh preview">${icon("refresh", 15)}</button>
+<div class="url">${icon("lock", 12)}<span>${esc(slug(p.name))}.architect.app</span><span class="path">/${page && page.kind !== "home" ? esc(slug(page.name)) : ""}</span></div>
+<div class="seg sm hide-sm" role="group" aria-label="Device size" style="margin-left:auto">${[["desktop", "monitor"], ["tablet", "tablet"], ["phone", "phone"]].map(([d, ic]) => `<button type="button" data-action="device" data-d="${d}" class="${ui.device === d ? "on" : ""}" aria-label="${cap(d)}" aria-pressed="${ui.device === d}">${icon(ic, 14)}</button>`).join("")}</div>
+<button type="button" class="select-btn ${ui.selecting ? "on" : ""}" data-action="toggle-select" aria-pressed="${ui.selecting}" ${lvl < 99 ? "disabled" : ""}>${icon("pointer", 13)}Select</button>
+<button type="button" class="icon-btn" data-action="open-draft" aria-label="Open the preview in a new tab">${icon("external", 15)}</button></div>
+<div class="viewport ${ui.device !== "desktop" ? "framed" : ""} ${ui.selecting ? "selecting" : ""}" id="viewport"><div class="device ${ui.device}">${lvl < 99 ? skeletonApp(lvl) : appView(p, { builder: true })}</div>${lvl >= 99 ? inspector() : ""}</div>
+${ui.console ? runsDrawer() : ""}
+<div class="console"><button type="button" data-action="toggle-console" aria-expanded="${ui.console}">${icon("terminal", 13)}Console</button><span>No errors</span><span>${plural(runs, "run")}</span>${changing ? `<span class="applying">${spinner(12)}Applying changes to the preview</span>` : lvl < 99 ? `<span class="applying">${spinner(12)}Building</span>` : ""}</div></div></div>`;
 }
-function activity() {
-  return `<div class="canvas-head"><h2>Your project’s story</h2><p>Every revision remains understandable. Published versions stay separate from your draft.</p></div><div class="panel"><h3>Draft changes</h3>${
-    p.changes.length
-      ? p.changes
-          .slice()
-          .reverse()
-          .map(
-            (c) =>
-              `<div class="listrow"><div><strong>${esc(c.reason)}</strong><p>${when(c.at)}</p></div>${tag("v" + c.revision)}</div>`,
-          )
-          .join("")
-      : "<p>No changes yet. Select a plan step to begin.</p>"
-  }</div><div class="panel"><div class="row between"><h3>Releases</h3>${btn("Open Deploy", "nav", "small", 'data-view="deploy"')}</div>${p.releases.length ? p.releases.slice().reverse().map((r) => `<div class="listrow"><div><strong>Release ${r.number} · draft v${r.revision}</strong><p>${when(r.at)} · ${esc(describe(r))}</p></div><a target="_blank" rel="noopener" href="?release=${r.id}">Open app ↗</a></div>`).join("") : "<p>No releases yet. Publishing creates a working recipient view of this browser’s saved snapshot.</p>"}</div><div class="panel"><div class="row between"><h3>Runs</h3>${btn("Open Runs", "nav", "small", 'data-view="runs"')}</div><p class="muted">${(p.runs || []).length} recorded run${(p.runs || []).length === 1 ? "" : "s"} in this browser.</p></div>`;
-}
-function settings() {
-  const members = p.members || [{ name: db.account?.name || "Aman", email: db.account?.email || "aman@demo.architect", role: "Owner" }];
-  return `<div class="canvas-head"><h2>Project settings</h2><p>Manage how this app looks, who it is for, who works on it, and how you keep your work.</p></div><div class="panel"><div class="listrow"><div><strong>App access</strong><p>${p.settings.audience === "team" ? "Team members · sign-in required" : "Anyone with the link"}</p></div>${btn("Edit", "access", "small")}</div><div class="listrow"><div><strong>Appearance</strong><p>${p.settings.theme === "forest" ? "Forest" : "Ocean"} app theme</p></div>${btn("Change", "appearance", "small")}</div><div class="listrow"><div><strong>Starting pattern</strong><p>${A().label} · chosen when the idea was shaped</p></div>${tag(A().agent.name)}</div><div class="listrow"><div><strong>Project export</strong><p>Download the generated source as a ZIP, or the saved configuration and history as JSON.</p></div><div class="row wrap">${btn("Source (.zip)", "download-zip", "small")}${btn("Config (.json)", "export", "small")}</div></div></div><div class="panel"><div class="row between"><h3>Environment variables</h3>${btn("Add variable", "add-env", "small")}</div><p class="muted">Names only in this demo. Values are never stored or sent; do not paste real keys.</p>${envVars(p).map((v) => `<div class="listrow"><div><strong><code>${esc(v.name)}</code></strong></div>${tag(v.status, v.status === "Not set" ? "warn" : v.status === "Managed" ? "blue" : "good")}</div>`).join("")}</div><div class="panel"><div class="row between"><h3>Members</h3>${btn("Invite", "invite", "small")}</div>${members.map((m) => `<div class="listrow"><div><strong>${esc(m.name || m.email)}</strong><p>${esc(m.email)}${m.status ? ` · ${esc(m.status)}` : ""}</p></div>${tag(m.role)}</div>`).join("")}</div><div class="panel"><h3>Workspace</h3><div class="listrow"><div><strong>Demo account</strong><p>${esc(db.account?.email || "aman@demo.architect")} · local browser storage</p></div>${btn("Prototype details", "about", "small")}</div><div class="listrow"><div><strong>Archive project</strong><p>Hides it from Home. Releases stay available in this browser.</p></div>${btn("Archive", "archive", "danger small")}</div></div>`;
-}
-function recipientView() {
-  let r;
-  for (const project of db.projects) {
-    r = project.releases.find((x) => x.id === releaseId);
-    if (r) break;
-  }
-  const bar = `<div class="prototype-note"><span>Released from Architect</span>${protoTag()}</div>`;
-  if (!r) {
-    app.innerHTML = `${bar}<main class="recipient"><h1>This local release isn’t available here.</h1><p>Prototype releases are stored in the browser that created them. They are not public deployments.</p><a href="./">Open Architect</a></main>`;
-    return;
-  }
-  p = r;
-  const a = A(r);
-  if (
-    r.settings.audience === "team" &&
-    !sessionStorage.getItem("recipient-" + r.id)
-  ) {
-    app.innerHTML = `${bar}<main class="recipient"><div class="panel"><span class="tag">${esc(r.name)}</span><h1 style="margin-top:24px">${a.headline}</h1><p>This release requires team sign-in. Enter as a sample employee to try the flow.</p>${btn("Continue as sample employee", "recipient-login", "primary")}<p class="footer-note">Demo access only. No real account or access protection.</p></div></main>`;
-    return;
-  }
-  app.innerHTML = `${bar}<main class="recipient"><div class="row between" style="margin-bottom:15px"><a href="./">← Back to Architect</a>${tag("Release " + r.number + " · v" + r.revision)}</div><div class="app-frame">${sampleApp(r, true)}</div><p class="footer-note">Saved release snapshot. Later draft edits do not change this version. Local to this browser.</p></main>`;
-  bind();
-}
-function render() {
-  if (releaseId) {
-    recipientView();
-    return;
-  }
-  if (view === "home") {
-    p = null;
-    app.innerHTML = home();
-  } else if (view === "signin") {
-    p = null;
-    app.innerHTML = signin();
-  } else if (view === "reading") {
-    p = null;
-    app.innerHTML = reading();
-  } else if (view === "shape") {
-    p = null;
-    app.innerHTML = shapeView();
-  } else {
-    const body =
-      view === "plan"
-        ? plan()
-        : view === "building"
-          ? building()
-          : view === "publishing"
-            ? publishing()
-            : view === "app"
-              ? preview()
-              : view === "agents"
-                ? agents()
-                : view === "data"
-                  ? data()
-                  : view === "code"
-                    ? code()
-                    : view === "runs"
-                      ? runs()
-                      : view === "review"
-                        ? review()
-                        : view === "deploy"
-                          ? deploy()
-                          : view === "activity"
-                            ? activity()
-                            : settings();
-    app.innerHTML = `${top()}<div class="workspace">${side()}${chat()}<main class="canvas" id="main">${body}</main></div>`;
-  }
-  bind();
-}
-function propose(next) {
-  proposal = next;
-  selection = "Answer";
-  render();
-  proposalDialog();
-}
-function proposalDialog() {
-  if (!proposal) return;
+function skeletonApp(lvl) {
+  const th = THEMES[p.settings.theme] || THEMES.forest;
+  const vars = themeVars(th);
   const a = A();
-  const next = { ...p.settings, ...proposal };
-  dialog(
-    "Review the change",
-    `<p>The same choice will update your plan, preview, ${a.agent.name} and generated code.</p>${configDiff(p.settings, next)}<h4>${a.settings.unknown.label}</h4><p>${esc(answer({ ...p, settings: next }, a.unmatched).text)}</p>`,
-    btn("Keep current version", "cancel-proposal") +
-      btn("Apply change", "apply-proposal", "primary"),
-  );
+  const real = (n) => lvl >= n;
+  const fresh = (n) => ((ui.lastLvl ?? 0) < n ? "reveal" : "");
+  queueMicrotask(() => (ui.lastLvl = lvl));
+  const sk = (w, h, extra = "") => `<span class="skel" style="display:block;width:${w};height:${h}px;${extra}"></span>`;
+  return `<div class="appview ${th.dark ? "dark" : ""}" style="${vars}"><header class="a-head">${real(25) ? `<span class="a-brand ${fresh(25)}"><span class="a-mark">${esc(p.name[0] || "A")}</span>${esc(p.name)}</span><nav class="a-nav ${fresh(25)}">${p.pages.map((x, k) => `<button type="button" class="${k === 0 ? "on" : ""}">${esc(x.name)}</button>`).join("")}</nav>` : sk("160px", 18)}</header>
+<div class="a-main">${real(45) ? `<div class="${fresh(45)}"><h2 class="a-h">${esc(p.copy.h2)}</h2><p class="a-intro">${esc(p.copy.intro)}</p></div><div class="a-form ${fresh(45)}" style="display:flex;gap:8px;align-items:center;border:1px solid var(--a-line);border-radius:12px;padding:6px 6px 6px 14px;background:var(--a-surface)"><span style="flex:1;color:var(--a-muted)">${esc(p.copy.placeholder)}</span><span class="a-btn">${esc(p.copy.button)}</span></div>` : `${sk("70%", 34)}${sk("45%", 14)}${sk("100%", 48, "margin-top:10px")}`}
+${real(80) ? `<div class="a-chips ${fresh(80)}">${(p.chips || a.chips).map(([l]) => `<span class="a-chip">${esc(l)}</span>`).join("")}</div>` : `<div style="display:flex;gap:8px">${sk("110px", 30)}${sk("130px", 30)}${sk("100px", 30)}</div>`}
+${sk("100%", 120, "margin-top:10px;opacity:.6")}</div></div>`;
 }
-function startBuild() {
-  view = "building";
-  buildStep = 0;
-  render();
-  clearInterval(buildTimer);
-  buildTimer = setInterval(() => {
-    if (view !== "building") {
-      clearInterval(buildTimer);
-      return;
-    }
-    buildStep++;
-    if (buildStep >= 3) {
-      clearInterval(buildTimer);
-      p.stage = "built";
-      save();
-    }
-    render();
-  }, 1100);
+const themeVars = (th) => `--a-bg:${th.bg};--a-surface:${th.surface};--a-ink:${th.ink};--a-muted:${th.muted};--a-accent:${th.accent};--a-on:${th.onAccent};--a-soft:${th.soft};--a-line:${th.line}`;
+function appView(t, { builder = false } = {}) {
+  const a = A(t),
+    s = t.settings,
+    th = THEMES[s.theme] || THEMES.forest,
+    copy = t.copy || a.app,
+    pages = t.pages?.length ? t.pages : [{ id: "home", name: "Ask", kind: "home" }];
+  const page = pages.find((x) => x.id === ui.page) || pages[0];
+  const el = (id) => (builder ? `data-el="${id}" data-label="${esc(EL_LABELS[id])}"` : "");
+  const selCls = (id) => (builder && ui.sel === id ? " is-selected" : "");
+  const signin = s.signin || (s.audience === "team" ? "Team sign-in" : "");
+  let body = "";
+  if (page.kind === "home") {
+    body = `<div ${el("hero")} class="${selCls("hero")}"><h2 class="a-h">${esc(copy.h2)}</h2><p class="a-intro">${esc(copy.intro)}</p></div>
+<form class="a-form${selCls("form")}" id="question-form" ${el("form")}><label class="sr" for="question">${esc(copy.placeholder)}</label><input id="question" autocomplete="off" placeholder="${esc(copy.placeholder)}" value="${esc(ui.q)}"><button class="a-btn" type="submit">${esc(copy.button)}</button></form>
+<div class="a-chips${selCls("chips")}" ${el("chips")}>${(t.chips || a.chips).map(([l, q]) => `<button type="button" class="a-chip" data-action="sample-question" data-q="${esc(q)}">${esc(l)}</button>`).join("")}</div>
+${ui.result ? resultCard(t, builder) : ""}`;
+  } else if (page.kind === "source") body = sourcePage(t, page);
+  else if (page.kind === "runs") {
+    const runs = builder ? t.runs || [] : [];
+    body = `<h2 class="a-h">${esc(page.name)}</h2>${runs.length ? `<div class="a-list">${runs.slice(0, 8).map((r) => `<div><strong>${esc(r.input)}</strong><small>${esc(r.output)}</small></div>`).join("")}</div>` : `<p class="a-empty">Nothing here yet. Questions and requests show up here after someone asks.</p>`}`;
+  } else if (page.kind === "about")
+    body = `<h2 class="a-h">${esc(page.name)}</h2><p class="a-intro" style="font-size:16px;line-height:1.7">${esc(a.promise(s.audience === "team" ? "teammates" : "customers", a.material))}</p><p class="a-intro">Answers come from ${esc(t.sourceName)}. ${t.agents?.some((x) => /escalat/i.test(x.name + x.responsibility)) ? "Anything it can’t answer goes to a person." : ""}</p>`;
+  else if (page.kind === "contact")
+    body = `<h2 class="a-h">${esc(page.name)}</h2><p class="a-intro">Send a message and a person will reply.</p><form class="stack" id="app-contact"><label class="sr" for="c-msg">Message</label><input id="c-email" placeholder="Your email" aria-label="Your email" style="background:var(--a-surface);color:var(--a-ink);border-color:var(--a-line)"><textarea id="c-msg" rows="4" placeholder="How can we help?" style="background:var(--a-surface);color:var(--a-ink);border-color:var(--a-line)"></textarea><button class="a-btn" type="submit" style="align-self:flex-start">Send</button></form>`;
+  else
+    body = `<h2 class="a-h">${esc(page.name)}</h2><p class="a-empty">This page is ready for content.</p>${builder ? `<span class="builder-hint">${icon("message", 13)}Describe what ${esc(page.name)} should show in the chat</span>` : ""}`;
+  return `<div class="appview ${th.dark ? "dark" : ""}" style="${themeVars(th)}"><header class="a-head"><span class="a-brand${selCls("brand")}" ${el("brand")}><span class="a-mark">${esc((t.name || "A")[0])}</span>${esc(t.name)}</span><nav class="a-nav${selCls("nav")}" ${el("nav")} aria-label="${esc(t.name)} pages">${pages.map((x) => `<button type="button" data-action="app-page" data-page="${x.id}" class="${x.id === page.id ? "on" : ""}">${esc(x.name)}</button>`).join("")}</nav><span class="a-user">${signin ? `<span class="a-signin">${icon("lock", 11)}${esc(signin)}</span>` : ""}<span class="av">JS</span></span></header><div class="a-main">${body}</div></div>`;
 }
-function startPublish() {
-  view = "publishing";
-  publishStep = 0;
-  render();
-  window.scrollTo({ top: 0 });
-  clearInterval(publishTimer);
-  publishTimer = setInterval(() => {
-    if (view !== "publishing") {
-      clearInterval(publishTimer);
-      return;
-    }
-    publishStep++;
-    if (publishStep >= 3) {
-      clearInterval(publishTimer);
-      const r = publish(p);
-      save();
-      view = "deploy";
-      render();
-      dialog(
-        "Your release is live in this browser",
-        `<span class="tag good">Release ${r.number} · v${r.revision}</span><h3 style="margin-top:18px">Try it as a ${people(p.settings) === "customers" ? "visitor" : "teammate"}.</h3><p>The released behavior and source are saved as a snapshot. Further edits remain in your draft.</p><a class="button-link" target="_blank" rel="noopener" href="?release=${r.id}">Open released app ↗</a><p class="footer-note" style="margin-top:14px">Production URL would be <code>${esc(appUrl())}</code>. That address is simulated; the link above is the working recipient view for this browser.</p>`,
-        btn("Done", "close", "primary"),
-      );
-      return;
-    }
-    render();
-  }, 600);
-}
-function startShaping() {
-  const read = interpret(brief);
-  shape = {
-    brief,
-    archetype: read.archetype,
-    name: read.name,
-    audience: read.audience,
-    autoNamed: true,
-  };
-  pending = null;
-  readStep = 0;
-  view = "reading";
-  render();
-  window.scrollTo({ top: 0 });
-  clearInterval(readTimer);
-  readTimer = setInterval(() => {
-    if (view !== "reading") {
-      clearInterval(readTimer);
-      return;
-    }
-    readStep++;
-    if (readStep >= 3) {
-      clearInterval(readTimer);
-      view = "shape";
-    }
-    render();
-  }, 450);
-}
-function create(imported = false, opts = {}) {
-  p = createProject(imported ? IMPORT_BRIEF : brief, imported, opts);
-  if (imported) {
-    p.baselineFramework = "LangGraph";
-    p.settings.length = "detailed";
-    p.settings.citations = false;
-    p.importedAt = new Date().toISOString();
-    p.git.repo = importFlow?.repo || "northstar/support-app";
-    p.git.branch = importFlow?.branch || "feature/citations";
-    p.git.connected = true;
-    p.git.committedRevision = 1;
-    p.git.syncedRevision = 1;
+function sourcePage(t, page) {
+  const a = A(t);
+  if (a.id === "insight") {
+    const rows = t.source.trim().split("\n").map((l) => l.split(",").map((c) => c.trim()));
+    const head = rows.shift() || [];
+    return `<h2 class="a-h">${esc(page.name)}</h2><table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   }
-  db.projects.unshift(p);
-  save();
-  shape = null;
-  openProject(p.id, imported ? "app" : "plan");
+  const lines = t.source.split("\n").filter((l) => l.includes(":"));
+  return `<h2 class="a-h">${esc(page.name)}</h2><div class="a-list">${lines.map((l) => `<div><strong>${esc(l.slice(0, l.indexOf(":")))}</strong><small>${esc(l.slice(l.indexOf(":") + 1).trim())}</small></div>`).join("")}</div>`;
 }
-function finishSignIn(method, email) {
-  db.signedIn = true;
-  db.account = {
-    name: email.startsWith("aman") ? "Aman" : method === "Demo" ? "Aman" : "You",
-    email,
-    method,
-  };
-  save();
-  auth = { step: "choose", provider: "", email: "" };
-  toast(`Signed in with ${method} · demo account`);
-  continuePending();
+function resultCard(t, builder) {
+  const a = A(t),
+    r = ui.result,
+    s = t.settings;
+  const el = builder ? `data-el="answer" data-label="${esc(`Answer card · ${a.agent.name}`)}"` : "";
+  const handoff = (t.agents || []).find((x) => /escalat/i.test(x.name + x.responsibility));
+  const chart = r.chart
+    ? `<div class="bars">${r.chart.data.map((d) => `<div class="bar-row ${r.chart.highlight.includes(d.label) ? "hi" : ""}"><span>${esc(d.label)}</span><span class="bar-track"><i style="width:${Math.round((d.values.at(-1) / Math.max(...r.chart.data.map((x) => x.values.at(-1)), 1)) * 100)}%"></i></span><b>${d.values.at(-1)}</b></div>`).join("")}</div>`
+    : "";
+  return `<div class="a-card${ui.fresh ? " reveal" : ""}${builder && ui.sel === "answer" ? " is-selected" : ""}" ${el}><div class="row between"><span class="a-label">${r.blocked ? "Setup needed" : r.supported ? esc(a.app.found) : esc(a.app.missing)}</span>${r.team ? `<span class="a-tags"><span class="a-tag">${esc(r.team)}</span><span class="a-tag ${r.priority === "High" ? "hi" : ""}">${esc(r.priority)} priority</span></span>` : ""}</div><p>${esc(r.text)}</p>${chart}
+${r.citation ? `<div ${builder ? `data-el="source" data-label="Source"` : ""} class="stack${builder && ui.sel === "source" ? " is-selected" : ""}" style="gap:8px">${ui.showSource ? `<div class="a-evidence">${esc(r.citation)}</div>` : ""}<div class="a-tags"><button type="button" class="a-tag" data-action="citation">${icon("book", 13)}${esc(a.evidenceLabel(r) || a.app.evidence)}</button></div></div>` : ""}
+${!r.supported && !r.blocked && handoff ? `<p class="a-intro" style="font-size:13px;margin:0">${icon("hash", 13)} Sent to a person on ${esc(handoff.channel || "email")} by ${esc(handoff.name)}.</p>` : ""}
+${s.feedback ? `<div class="a-feedback">${ui.fb ? (ui.fb === "down" && handoff ? `Thanks. ${esc(handoff.name)} passed this to a person.` : "Thanks for the feedback.") : `Was this helpful?<button type="button" data-action="fb" data-v="up">Helpful</button><button type="button" data-action="fb" data-v="down">Not helpful</button>`}</div>` : ""}</div>`;
 }
-function continuePending() {
-  const next = pending;
-  pending = null;
-  if (next?.action === "shape") return startShaping();
-  view = "home";
+function runsDrawer() {
+  const runs = p.runs || [];
+  return `<div class="drawer" aria-label="Runs">${runs.length ? runs.map((r, k) => runItem(r, k === 0)).join("") : `<p class="muted">No runs yet. Ask the app a question and each run appears here with the steps the agent took.</p>`}</div>`;
+}
+const runItem = (r, open) =>
+  `<details class="run" ${open ? "open" : ""}><summary><span><strong>${esc(r.input)}</strong><br><span class="small muted">${ago(r.at)} · version ${r.revision} · ${r.ms} ms</span></span><span class="status ${r.supported ? "live" : "ember"}"><span class="dot ${r.supported ? "live" : "ember"}"></span>${r.supported ? "Answered" : "No match"}</span></summary><ol class="trace">${r.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol><div class="out">${esc(r.output)}</div><div style="margin-top:8px">${btn("Run again with the current version", "rerun", "btn sm", `data-input="${esc(r.input)}"`)}</div></details>`;
+
+// Select to edit
+function inspector() {
+  if (!ui.selecting || !ui.sel) return "";
+  const a = A(),
+    s = p.settings,
+    c = p.copy;
+  const head = `<div class="ins-head"><strong>${EL_LABELS[ui.sel]}</strong>${btn(icon("x", 14), "clear-sel", "icon-btn", 'aria-label="Close" style="width:28px;height:28px"')}</div>`;
+  const agent = `<button type="button" class="agent-link" data-action="tab" data-tab="agents"><span class="ag">${icon("bot", 16)}</span><span class="grow"><small>${ui.sel === "form" ? "Questions go to" : "Answers come from"}</small><b>${esc(a.agent.name)}</b></span>${icon("right", 15)}</button>`;
+  const ask = `<button type="button" class="btn sm" data-action="focus-chat">${icon("message", 13)}Ask for a change to this</button>`;
+  let body = "";
+  if (ui.sel === "brand")
+    body = `<form id="ins-name" class="stack" style="gap:8px"><label class="field-label" for="ins-name-input" style="margin:0">App name</label><div class="row"><input id="ins-name-input" value="${esc(p.name)}" maxlength="50"><button class="btn sm primary" type="submit">Save</button></div></form><div class="stack" style="gap:6px"><span class="field-label" style="margin:0">Look</span><div class="row wrap">${Object.entries(THEMES).map(([k, th]) => `<button type="button" class="swatch ${s.theme === k ? "on" : ""}" data-action="theme" data-theme="${k}" aria-label="${th.label} theme" title="${th.label}" style="--sw:${th.accent};--sw-bg:${th.bg}"></button>`).join("")}</div></div>`;
+  else if (ui.sel === "hero")
+    body = `<form id="ins-hero" class="stack" style="gap:8px"><label class="field-label" for="ins-h2" style="margin:0">Headline</label><input id="ins-h2" value="${esc(c.h2)}" maxlength="80"><label class="field-label" for="ins-intro" style="margin:0">Intro</label><input id="ins-intro" value="${esc(c.intro)}" maxlength="140"><button class="btn sm primary" type="submit" style="align-self:flex-start">Save text</button></form>`;
+  else if (ui.sel === "form")
+    body = `${agent}<form id="ins-form" class="stack" style="gap:8px"><label class="field-label" for="ins-ph" style="margin:0">Placeholder</label><input id="ins-ph" value="${esc(c.placeholder)}" maxlength="80"><label class="field-label" for="ins-btn" style="margin:0">Button</label><input id="ins-btn" value="${esc(c.button)}" maxlength="30"><button class="btn sm primary" type="submit" style="align-self:flex-start">Save text</button></form>`;
+  else if (ui.sel === "answer" || ui.sel === "source")
+    body = `${agent}<div><div class="toggle-row"><span>Answer length</span><div class="seg sm">${["short", "detailed"].map((v) => `<button type="button" data-action="set" data-key="length" data-val="${v}" class="${s.length === v ? "on" : ""}">${v === "short" ? "Short" : "Detailed"}</button>`).join("")}</div></div><div class="toggle-row"><span>Show the ${esc(a.app.evidence.toLowerCase())}</span>${sw("setting", s.citations, "Show evidence", 'data-key="citations"')}</div><div class="toggle-row"><span>Feedback buttons</span>${sw("setting", s.feedback, "Feedback buttons", 'data-key="feedback"')}</div><div class="toggle-row"><span>No answer</span><div class="seg sm">${[["explain", "Hand off"], ["ask", "Ask back"]].map(([v, l]) => `<button type="button" data-action="set" data-key="unknown" data-val="${v}" class="${s.unknown === v ? "on" : ""}">${l}</button>`).join("")}</div></div></div>`;
+  else if (ui.sel === "nav")
+    body = `<div class="stack" style="gap:4px">${p.pages.map((x) => `<div class="toggle-row"><span>${esc(x.name)} <small>${x.kind === "home" ? "First page" : cap(x.kind === "runs" ? "history" : x.kind)}</small></span>${x.kind === "home" ? "" : btn(icon("x", 13), "remove-page", "icon-btn", `data-id="${x.id}" aria-label="Remove ${esc(x.name)}" style="width:28px;height:28px"`)}</div>`).join("")}</div><form id="ins-page" class="row"><label class="sr" for="ins-page-name">New page name</label><input id="ins-page-name" placeholder="New page, e.g. FAQ" maxlength="28"><button class="btn sm" type="submit">Add</button></form>`;
+  else if (ui.sel === "chips")
+    body = `<p class="hint">These three questions double as the checks that run before you publish: two should be answered and one should not.</p>${btn("Edit in Data", "tab", "btn sm", 'data-tab="data"')}`;
+  return `<div class="inspector" id="inspector" role="dialog" aria-label="${EL_LABELS[ui.sel]}" style="visibility:hidden">${head}${body}${ask}</div>`;
+}
+function placeInspector() {
+  const ins = document.querySelector("#inspector");
+  if (!ins) return;
+  const vp = document.querySelector("#viewport");
+  const target = vp.querySelector(`[data-el="${ui.sel}"]`);
+  if (!target) {
+    ins.remove();
+    return;
+  }
+  const v = vp.getBoundingClientRect(),
+    r = target.getBoundingClientRect();
+  let top = r.bottom - v.top + vp.scrollTop + 14;
+  const below = v.bottom - r.bottom;
+  if (below < ins.offsetHeight + 20 && r.top - v.top > ins.offsetHeight + 40) top = r.top - v.top + vp.scrollTop - ins.offsetHeight - 40;
+  top = Math.max(vp.scrollTop + 12, Math.min(top, vp.scrollTop + vp.clientHeight - ins.offsetHeight - 12));
+  const left = Math.max(12, Math.min(r.right - v.left - ins.offsetWidth, vp.clientWidth - ins.offsetWidth - 12));
+  ins.style.top = top + "px";
+  ins.style.left = left + "px";
+  ins.style.visibility = "visible";
+}
+
+// Code
+function visibleFiles() {
+  const files = generateFiles(p);
+  const lvl = firstBuildLevel();
+  if (lvl >= 99) return files;
+  return files.slice(0, Math.max(0, Math.round((files.length * lvl) / 100)));
+}
+const EXT_RULES = {
+  js: [/(\/\/.*$)|(`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b(?:import|from|export|const|let|var|function|async|await|return|if|else|for|of|in|new|throw|try|catch|typeof|default)\b)|(\b\d+(?:\.\d+)?\b)/g, ["com", "str", "kw", "num"]],
+  py: [/(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b(?:def|return|import|from|class|if|else|for|in|raise|with|as|lambda|None|True|False|and|or|not)\b)|(\b\d+(?:\.\d+)?\b)/g, ["com", "str", "kw", "num"]],
+  yaml: [/(#.*$)|("[^"]*"|'[^']*')|(^\s*-?\s*[\w.-]+(?=:))|(\b\d+(?:\.\d+)?\b)/g, ["com", "str", "key", "num"]],
+  json: [/("(?:[^"\\]|\\.)*"(?=\s*:))|("(?:[^"\\]|\\.)*")|(\b(?:true|false|null)\b)|(-?\b\d+(?:\.\d+)?\b)/g, ["key", "str", "kw", "num"]],
+  md: [/(^#.*$)|(`[^`]*`)|(^\s*-\s)/g, ["kw", "str", "num"]],
+  css: [/(\/\*.*?\*\/)|("[^"]*")|(^\s*[\w-]+(?=\s*[:{])|--[\w-]+)|(#[0-9a-fA-F]{3,8}\b|\b\d+(?:px|em|%)?\b)/g, ["com", "str", "key", "num"]],
+  html: [/(<!--.*?-->)|("[^"]*")|(<\/?[\w-]+|\/?>)|(\b\d+\b)/g, ["com", "str", "kw", "num"]],
+};
+EXT_RULES.mjs = EXT_RULES.js;
+EXT_RULES.yml = EXT_RULES.yaml;
+function highlightLine(line, ext) {
+  const rule = EXT_RULES[ext];
+  if (!rule) return esc(line);
+  const [re, cls] = rule;
+  let out = "",
+    last = 0;
+  for (const m of line.matchAll(re)) {
+    const g = m.findIndex((x, k) => k > 0 && x !== undefined);
+    out += esc(line.slice(last, m.index)) + `<span class="tk-${cls[g - 1]}">${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(line.slice(last));
+}
+function codePane() {
+  const files = visibleFiles();
+  if (!files.length) return `<div class="code-wrap"><div class="tree"></div><div class="viewer"><div class="empty" style="margin:auto"><div class="display">Writing files…</div><p>They appear here as the build creates them.</p></div></div></div>`;
+  if (!files.some((f) => f.path === ui.codeFile)) ui.codeFile = (files.find((f) => f.path === "app/index.html") || files[0]).path;
+  const f = files.find((x) => x.path === ui.codeFile);
+  const base = p.git.connected && p.git.committedRevision ? committedFiles(p) : null;
+  const marks = new Map((base ? diffFiles(base, files) : []).map((d) => [d.path, d.status]));
+  // Lines the last version added to this file
+  let added = new Set();
+  const prev = p.versions.at(-2);
+  if (prev) {
+    const old = generateFiles({ ...p, ...clone(prev.state) }).find((x) => x.path === f.path);
+    if (old && old.text !== f.text) {
+      const pool = new Map();
+      for (const l of old.text.split("\n")) pool.set(l, (pool.get(l) || 0) + 1);
+      f.text.split("\n").forEach((l, k) => {
+        if (pool.get(l)) pool.set(l, pool.get(l) - 1);
+        else if (l.trim()) added.add(k);
+      });
+    }
+  }
+  // Folder tree
+  const dirs = {};
+  for (const x of files) {
+    const parts = x.path.split("/");
+    const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+    (dirs[dir] ||= []).push(x);
+  }
+  const tree = Object.keys(dirs)
+    .sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)))
+    .map((d) => `${d ? `<div class="tree-row">${icon("folder", 14)}${esc(d)}</div>` : ""}${dirs[d].map((x) => `<button type="button" class="tree-row file ${x.path === ui.codeFile ? "on" : ""} ${firstBuildLevel() < 99 ? "appear" : ""}" data-action="code-file" data-path="${esc(x.path)}" style="padding-left:${d ? 28 : 8}px">${icon("file", 13)}<span>${esc(x.path.split("/").pop())}</span>${marks.get(x.path) ? `<span class="mark ${marks.get(x.path)}" title="${marks.get(x.path) === "A" ? "Added" : "Modified"} since the last commit">${marks.get(x.path)}</span>` : ""}</button>`).join("")}`)
+    .join("");
+  const ext = f.path.split(".").pop();
+  const cloneCmd = p.git.connected ? `git clone https://github.com/${p.git.repo}.git` : `npx architect pull ${slug(p.name)}`;
+  return `<div class="code-wrap"><nav class="tree" aria-label="Files"><div class="t-head"><span class="eyebrow">Files</span><span class="small muted">${files.length}</span></div>${tree}</nav>
+<div class="viewer"><div class="viewer-bar"><div class="crumbs">${f.path.split("/").map((x, k, arr) => (k === arr.length - 1 ? `<b>${esc(x)}</b>` : `${esc(x)}<span>/</span>`)).join("")}</div><div class="row" style="margin-left:auto">${p.git.connected ? `<span class="status hide-sm">${icon("branch", 13)}${esc(p.git.branch)} · ${p.git.committedRevision === p.revision ? "synced" : "not pushed"}</span>` : btn(`${icon("github", 14)}Save to GitHub`, "pop", "btn sm quiet", 'data-pop="github"')}${btn(`${icon("copy", 13)}Copy`, "copy-file", "btn sm")}${btn(`${icon("download", 13)}Download`, "download-zip", "btn sm")}</div></div>
+<pre class="code" aria-label="${esc(f.path)}"><code>${f.text.replace(/\n$/, "").split("\n").map((l, k) => `<span class="ln${added.has(k) ? " added" : ""}">${highlightLine(l, ext)}</span>`).join("")}</code></pre>
+<div class="code-foot"><span class="hide-sm">Run it yourself:</span>${btn("npm run dev", "copy-cmd", "cmd", 'data-cmd="npm run dev"')}${btn("npm test", "copy-cmd", "cmd", 'data-cmd="npm test"')}<span style="margin-left:auto" class="hide-sm"></span>${btn(esc(cloneCmd), "copy-cmd", "cmd hide-sm", `data-cmd="${esc(cloneCmd)}"`)}</div></div></div>`;
+}
+
+// Agents
+function agentsPane() {
+  const a = A(),
+    extra = p.agents || [],
+    sel = extra.find((x) => x.id === ui.agentSel);
+  const setup = frameworkSetup(p);
+  const list = `<div class="side-list"><span class="eyebrow">Agents</span><button type="button" class="agent-item ${!sel ? "on" : ""}" data-action="agent-select" data-id="main"><span class="ag">${icon("bot", 16)}</span><span><b>${esc(a.agent.name)}</b><small>${esc(p.settings.framework)} · answers from ${esc(p.sourceName)}</small></span></button>${extra.map((x) => `<button type="button" class="agent-item ${sel?.id === x.id ? "on" : ""}" data-action="agent-select" data-id="${x.id}"><span class="ag alt">${icon("bot", 16)}</span><span><b>${esc(x.name)}</b><small>${esc(x.trigger || "")}${x.channel ? ` · ${esc(x.channel)}` : ""}</small></span></button>`).join("")}<button type="button" class="btn sm" data-action="add-agent" style="margin:8px 4px 0;align-self:flex-start">${icon("plus", 14)}Add agent</button>
+<div class="flow-mini" aria-label="How a question moves"><span>${icon("message", 12)} Question asked</span><span class="arrow">↓</span><span><b>${esc(a.agent.name)}</b> reads ${esc(p.sourceName)}</span>${extra.map((x) => `<span class="arrow">↓ ${esc((x.trigger || "").toLowerCase())}</span><span><b>${esc(x.name)}</b>${x.channel ? ` → ${esc(x.channel)}` : ""}</span>`).join("")}<span class="arrow">↓</span><span>Answer card</span></div></div>`;
+  if (sel)
+    return `<div class="panel-wrap">${list}<div class="main-panel"><div class="ph"><span class="ag" style="width:36px;height:36px;border-radius:10px;background:var(--mist);display:inline-flex;align-items:center;justify-content:center">${icon("bot", 18)}</span><div><h2>${esc(sel.name)}</h2><span class="status"><span class="dot live"></span>${esc(sel.status || "Configured")}</span></div></div>
+<div class="card"><div class="listrow"><div><strong>Job</strong><p>${esc(sel.responsibility)}</p></div></div><div class="listrow"><div><strong>Runs</strong><p>${esc(sel.trigger)}</p></div></div>${sel.channel ? `<div class="listrow"><div><strong>Reaches people on</strong><p>${esc(sel.channel)}</p></div></div>` : ""}<div class="listrow"><div><strong>Origin</strong><p>${esc(sel.origin || "Created here")}${sel.entry ? ` · <code>${esc(sel.entry)}</code>` : ""}</p></div></div></div>
+<div class="row" style="margin-top:14px">${btn("Remove agent", "remove-agent", "btn danger sm", `data-id="${sel.id}"`)}</div></div></div>`;
+  const s = p.settings,
+    tools = p.tools || ["read_source"];
+  const tabs = [
+    ["behavior", "Behavior"],
+    ["tools", "Tools"],
+    ["framework", "Framework and model"],
+    ["test", "Test"],
+    ["runs", `Runs · ${(p.runs || []).length}`],
+  ];
+  let body = "";
+  if (ui.agentTab === "behavior")
+    body = `<div class="card"><h3>Job</h3><p class="muted" style="margin-top:6px">${esc(a.agent.job)}. Used on ${esc(p.pages[0]?.name || "the first page")}.</p></div>
+<form class="card" id="instructions-form"><h3>Instructions</h3><label class="sr" for="instructions">Instructions</label><textarea id="instructions" rows="5" style="margin-top:10px">${esc(p.instructions)}</textarea><div class="row between" style="margin-top:10px"><span class="hint">Written to <code>agents/prompts/${esc(slug(a.agent.name).replace(/-/g, "_"))}.md</code></span><button class="btn sm primary" type="submit">Save instructions</button></div></form>
+<div class="card"><h3>Behavior</h3><div style="margin-top:6px"><div class="toggle-row"><span>Answer length</span><div class="seg sm">${["short", "detailed"].map((v) => `<button type="button" data-action="set" data-key="length" data-val="${v}" class="${s.length === v ? "on" : ""}">${v === "short" ? "Short" : "Detailed"}</button>`).join("")}</div></div><div class="toggle-row"><span>When there’s no answer</span><div class="seg sm">${[["explain", "Explain and hand off"], ["ask", "Ask a follow-up"]].map(([v, l]) => `<button type="button" data-action="set" data-key="unknown" data-val="${v}" class="${s.unknown === v ? "on" : ""}">${l}</button>`).join("")}</div></div><div class="toggle-row"><span>Show the ${esc(a.app.evidence.toLowerCase())}<small>People can check where each answer came from.</small></span>${sw("setting", s.citations, "Show evidence", 'data-key="citations"')}</div><div class="toggle-row"><span>Feedback buttons<small>Helpful and Not helpful under each answer.</small></span>${sw("setting", s.feedback, "Feedback buttons", 'data-key="feedback"')}</div></div></div>`;
+  else if (ui.agentTab === "tools")
+    body = `<div class="card"><h3>What ${esc(a.agent.name)} may do</h3><div style="margin-top:6px">${TOOLS.map(([id, label]) => `<div class="toggle-row"><span>${esc(label)}<small>${id === "read_source" ? `Reads ${esc(p.sourceName)}. Turn it off and the app replies with a setup message.` : "Runs as a demo action in this prototype."}</small></span>${sw("tool", tools.includes(id), label, `data-id="${id}"`)}</div>`).join("")}</div></div>`;
+  else if (ui.agentTab === "framework")
+    body = `<div class="card"><h3>Framework</h3><p class="hint" style="margin:6px 0 12px">Keep the stack you already use. Architect writes the matching files.</p><div class="fw-chips">${["Lyzr managed", "LangGraph", "CrewAI", "OpenAI Agents SDK", "Custom framework"].map((x) => btn(x, "framework", `chip ${s.framework === x ? "on" : ""}`, `data-fw="${x}" aria-pressed="${s.framework === x}"`)).join("")}</div>
+${s.framework === "Custom framework" ? `<form id="custom-entry" class="row" style="margin-top:12px"><label class="sr" for="entry">Entry point</label><input id="entry" value="${esc(s.customFramework || "")}" placeholder="agents/main.py exposing run(input)"><button class="btn sm" type="submit">Save</button></form>` : ""}
+<p class="hint" style="margin-top:12px">Writes ${btn(`<code>${esc(setup.entry)}</code>`, "code-open", "link", `data-path="${esc(setup.entry)}"`)} · runs on ${esc(setup.runtime)}</p></div>
+<div class="card"><h3>Model</h3><label class="sr" for="agent-model">Model</label><select id="agent-model" data-change="model" style="margin-top:10px">${["Managed default", "OpenAI · bring your key", "Anthropic · bring your key"].map((x) => `<option ${s.model === x ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+<div class="card"><div class="row between"><h3>Setup</h3><span class="status ${/ready/i.test(setup.status) ? "live" : ""}"><span class="dot ${/ready/i.test(setup.status) ? "live" : "amber"}"></span>${esc(setup.status)}</span></div><ol class="trace" style="margin-top:10px">${setup.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol><div style="margin-top:12px">${envVars(p).map((v) => `<div class="toggle-row"><code>${esc(v.name)}</code><span class="status ${v.status === "Not set" ? "" : "live"}"><span class="dot ${v.status === "Not set" ? "amber" : "live"}"></span>${esc(v.status)}</span></div>`).join("")}</div>${btn("Manage variables", "settings", "btn sm", 'style="margin-top:10px"')}</div>`;
+  else if (ui.agentTab === "test")
+    body = `<form class="card" id="test-form"><h3>Try ${esc(a.agent.name)}</h3><div class="row" style="margin-top:10px"><label class="sr" for="test-input">Test input</label><input id="test-input" value="${esc(ui.testInput || (p.chips || a.chips)[0][1])}"><button class="btn primary sm" type="submit">${icon("play", 12)}Run</button></div><div class="row wrap" style="margin-top:10px">${(p.chips || a.chips).map(([l, q]) => btn(esc(l), "test-chip", "chip", `data-q="${esc(q)}"`)).join("")}</div>${ui.testResult ? `<div class="out" style="margin-top:14px"><strong>${ui.testResult.supported ? "Answered" : "No match"}</strong><p style="margin-top:4px">${esc(ui.testResult.text)}</p></div><ol class="trace">${ui.testResult.steps.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}</form>`;
+  else body = `<div class="card">${(p.runs || []).length ? p.runs.map((r, k) => runItem(r, k === 0)).join("") : `<p class="muted">No runs yet. Every question asked in the preview or in Test is recorded here with its steps.</p>`}</div>`;
+  return `<div class="panel-wrap">${list}<div class="main-panel"><div class="ph"><span style="width:36px;height:36px;border-radius:10px;background:var(--ink);color:#fff;display:inline-flex;align-items:center;justify-content:center">${icon("bot", 18)}</span><div><h2>${esc(a.agent.name)}</h2><span class="status ${/ready/i.test(setup.status) ? "live" : ""}"><span class="dot ${/ready/i.test(setup.status) ? "live" : "amber"}"></span>${esc(/ready/i.test(setup.status) ? "Ready" : setup.status)} · ${esc(s.framework)}</span></div></div><div class="subtabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" aria-selected="${ui.agentTab === k}" data-action="agent-tab" data-k="${k}" class="${ui.agentTab === k ? "on" : ""}">${l}</button>`).join("")}</div>${body}</div></div>`;
+}
+
+// Data
+function dataPane() {
+  const a = A();
+  const checks = runChecks(p);
+  return `<div class="panel-wrap"><div class="side-list"><span class="eyebrow">Sources</span><div class="agent-item on"><span class="ag">${icon(a.id === "insight" ? "db" : "book", 16)}</span><span><b>${esc(p.sourceName)}</b><small>${p.sourceKind === "sample" ? "Sample content" : "Your content"} · ${plural(p.source.split("\n").filter(Boolean).length, "line")}</small></span></div><span class="eyebrow" style="margin-top:14px">Connect</span>${a.source.connectors.map((x) => `<button type="button" class="agent-item" data-action="connect-source" data-source="${esc(x)}"><span class="ag alt">${icon("link", 15)}</span><span><b>${esc(x)}</b><small>${p.connections?.includes(x) ? "Set up" : "Not connected"}</small></span></button>`).join("")}</div>
+<div class="main-panel"><div class="ph"><div><h2>${esc(p.sourceName)}</h2><span class="status">${p.sourceKind === "sample" ? "Sample content. Replace it with yours." : "Your content"}</span></div></div>
+<form class="card" id="source-form"><div class="field"><label class="field-label" for="source-name">Name</label><input id="source-name" value="${esc(p.sourceName)}" required></div><div class="field"><label class="field-label" for="source-text">${esc(a.source.label)}</label><textarea id="source-text" rows="9" class="mono" style="font-size:12.5px">${esc(p.source)}</textarea><p class="hint">${esc(a.source.hint)}</p></div><div class="row between" style="margin-top:12px"><label class="btn sm" style="cursor:pointer">${icon("upload", 13)}Import a .txt or .csv<input id="source-file" type="file" accept=".txt,.csv,.md,text/plain,text/csv" class="sr"></label><button class="btn primary sm" type="submit">Save source</button></div></form>
+<div class="card"><div class="row between"><h3>Sample questions</h3><span class="status ${checks.passed === checks.total ? "live" : ""}"><span class="dot ${checks.passed === checks.total ? "live" : "amber"}"></span>${checks.passed} of ${checks.total} behave</span></div><p class="hint" style="margin:6px 0 8px">The first two should be answered and the last should not. They run before every publish.</p>${checks.results.map((r) => `<div class="toggle-row"><span>${esc(r.question)}<small>${r.expected ? "Should be answered" : "Should not be answered"}</small></span><span class="status ${r.ok ? "live" : "ember"}">${r.ok ? icon("check", 14) : icon("alert", 14)}${r.ok ? "As expected" : "Check this"}</span></div>`).join("")}</div></div></div>`;
+}
+
+// ---------- Popovers ----------
+function workspacePop() {
+  if (ui.pop === "project") return projectPop();
+  if (ui.pop === "history") return historyPop();
+  if (ui.pop === "github") return githubPop();
+  if (ui.pop === "share") return sharePop();
+  if (ui.pop === "publish") return publishPop();
+  if (ui.pop === "account") return accountPop("ws");
+  return "";
+}
+function projectPop() {
+  return `<div class="pop left" role="dialog" aria-label="Project"><form id="rename-form" class="stack" style="gap:8px"><label class="field-label" for="rename" style="margin:0">Project name</label><div class="row"><input id="rename" value="${esc(p.name)}" maxlength="50"><button class="btn sm primary" type="submit">Save</button></div></form><div class="menu">${btn(`${icon("settings", 15)}Project settings`, "settings", "")}${btn(`${icon("history", 15)}Version history`, "pop", "", 'data-pop="history"')}${btn(`${icon("download", 15)}Download source (.zip)`, "download-zip", "")}${btn(`${icon("file", 15)}Export project (.json)`, "export", "")}<hr>${btn(`${icon("grid", 15)}All projects`, "home", "")}${btn(`${icon("archive", 15)}Archive project`, "archive", "")}</div></div>`;
+}
+function historyPop() {
+  const rel = new Map(p.releases.map((r) => [r.revision, r.number]));
+  return `<div class="pop" role="dialog" aria-label="Version history"><div><h2>Versions</h2><p class="sub">Every change is saved. Restoring an older version adds a new one, so nothing is lost.</p></div><div class="versions">${[...p.versions]
+    .reverse()
+    .map((v, k) => `<div class="listrow"><div><strong>Version ${v.n}</strong><p>${esc(v.label)} · ${ago(v.at)}${rel.has(v.revision) ? ` · published as release ${rel.get(v.revision)}` : ""}</p></div>${k === 0 ? `<span class="status live"><span class="dot live"></span>Current</span>` : btn("Restore", "restore", "btn sm", `data-id="${v.id}"`)}</div>`)
+    .join("")}</div></div>`;
+}
+function githubPop() {
+  const g = p.git;
+  if (!g.connected)
+    return `<div class="pop" role="dialog" aria-label="GitHub"><div><h2>Save every version to GitHub</h2><p class="sub">Architect commits each version to your repository, so the code is always yours.</p></div><form id="git-form" class="stack" style="gap:12px"><div class="field"><label class="field-label" for="git-repo">Repository</label><input id="git-repo" value="${esc(g.repo || `${slug(db.account?.name || "you")}/${slug(p.name)}`)}" pattern="[\\w.\\-]+/[\\w.\\-]+" required></div><div class="toggle-row" style="border:0;padding:0"><span>Private repository</span>${sw("noop", true, "Private repository")}</div><button class="btn primary" type="submit" ${ui.gitStep ? "disabled" : ""}>${ui.gitStep ? `${spinner(14)}Waiting for GitHub…` : `${icon("github", 16)}Connect GitHub`}</button></form><div class="pop-foot"><span>Already on GitHub?</span>${btn("Import a repository", "import", "link")}</div></div>`;
+  const behind = g.committedRevision < p.revision;
+  const n = p.versions.filter((v) => v.revision > g.committedRevision).length;
+  return `<div class="pop" role="dialog" aria-label="GitHub"><div class="row" style="gap:10px">${icon("github", 22)}<div class="grow"><strong style="font-size:15px">${esc(g.repo)}</strong><div class="row small muted">${icon("branch", 13)}<span>${esc(g.branch)}</span>${btn("Change", "branch", "link small")}</div></div></div>
+<div class="note-amber" style="background:${behind ? "var(--amber-soft)" : "var(--sage)"}">${behind ? icon("alert", 15) : icon("check", 15)}<span>${behind ? `${plural(n || 1, "version")} not pushed yet` : `Up to date${g.lastMessage ? ` · “${esc(g.lastMessage)}”` : ""}`}</span></div>
+<div class="toggle-row"><span>Commit every version automatically<small>Turn off to review and push yourself.</small></span>${sw("git-auto", g.auto !== false, "Commit every version automatically")}</div>
+<div class="row wrap">${behind ? btn("Commit and push", "commit-push", "btn primary sm") : ""}${btn("Open a pull request", "open-pr", "btn sm")}${btn(`${icon("code", 13)}View changes`, "tab", "btn sm", 'data-tab="code"')}</div>
+<div class="field"><span class="field-label">Clone</span>${btn(`git clone https://github.com/${esc(g.repo)}.git`, "copy-cmd", "cmd", `data-cmd="git clone https://github.com/${esc(g.repo)}.git" style="text-align:left;padding:8px 10px"`)}</div>
+<div class="pop-foot"><span>${g.lastCommit ? `Last commit <code>${esc(g.lastCommit)}</code>` : "No commits yet"}</span>${btn("Disconnect", "git-disconnect", "link")}</div></div>`;
+}
+function sharePop() {
+  const me = { email: db.account?.email || "aman@demo.architect", role: "Owner", name: db.account?.name || "Aman" };
+  const members = [me, ...(p.members || []).filter((m) => m.role !== "Owner")];
+  return `<div class="pop" role="dialog" aria-label="Share"><div><h2>Share ${esc(p.name)}</h2><p class="sub">Invite people to build with you, or send the preview.</p></div><form id="invite-form" class="row"><label class="sr" for="invite-email">Email</label><input id="invite-email" type="email" required placeholder="name@company.com"><label class="sr" for="invite-role">Role</label><select id="invite-role" style="width:auto"><option>Can edit</option><option>Can view</option></select><button class="btn primary sm" type="submit">Invite</button></form><div>${members.map((m) => `<div class="listrow"><div class="row" style="gap:10px"><span class="avatar sm">${esc((m.name || m.email).slice(0, 2).toUpperCase())}</span><div><strong style="font-size:13.5px">${esc(m.name || m.email)}</strong><p>${esc(m.email)}${m.status ? ` · ${esc(m.status)}` : ""}</p></div></div><span class="small muted">${esc(m.role)}</span></div>`).join("")}</div><div class="pop-foot"><span>${icon("link", 13)} Preview link</span>${btn(`${icon("copy", 13)}Copy link`, "copy-preview", "btn sm")}</div></div>`;
+}
+function publishPop() {
+  const latest = p.releases.at(-1);
+  const address = p.customDomain?.status === "verified" ? p.customDomain.name : `${slug(p.name)}.architect.app`;
+  if (typeof ui.pubStep === "number") {
+    const steps = [`Froze version ${p.versions.at(-1).n}`, `Started ${plural(1 + (p.agents || []).length, "agent")} with production settings`, "Moved visitors to the new version"];
+    return `<div class="pop" role="dialog" aria-label="Publishing"><div class="row between"><h2>Publishing</h2><span class="small muted">${ui.pubStep + 1} of 3</span></div><div class="progress"><i style="width:${Math.round(((ui.pubStep + 0.5) / 3) * 100)}%"></i></div><div class="steps">${steps.map((s, k) => (k < ui.pubStep ? `<div class="step">${icon("check", 14, "add")}<span>${esc(s)}</span></div>` : k === ui.pubStep ? `<div class="step current">${spinner(14)}<span>${esc(s)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(s)}</span></div>`)).join("")}</div></div>`;
+  }
+  if (ui.pubStep === "live" && latest) {
+    return `<div class="pop" role="dialog" aria-label="Live"><div class="live-art">${horizon(true)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:30px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}${btn(icon("qr", 16), "qr", "icon-btn", 'aria-label="Show QR code" style="border:1px solid var(--line-2);width:36px;height:36px"')}</div>${releasesList()}</div>`;
+  }
+  const checks = runChecks(p);
+  const env = envVars(p).filter((v) => v.status === "Not set");
+  const reading = (p.tools || ["read_source"]).includes("read_source");
+  const since = latest ? p.versions.filter((v) => v.revision > latest.revision).length : 0;
+  const upToDate = latest && latest.revision === p.revision;
+  return `<div class="pop" role="dialog" aria-label="Publish"><div><h2>Publish ${esc(p.name)}</h2><p class="sub">${latest ? (upToDate ? `Release ${latest.number} is live and up to date.` : `Version ${p.versions.at(-1).n} · ${plural(since, "change")} since release ${latest.number}`) : `Version ${p.versions.at(-1).n} · first release`}</p></div>
+<div class="field"><span class="field-label">Address</span><div class="addr"><span class="grow">${esc(slug(p.name))}<span class="muted">.architect.app</span></span>${p.customDomain ? `<span class="status ${p.customDomain.status === "verified" ? "live" : ""}" style="background:var(--sage);border-radius:8px;padding:4px 8px"><span class="dot ${p.customDomain.status === "verified" ? "live" : "amber"}"></span>${esc(p.customDomain.name)}</span>` : btn("Add a domain", "domain", "btn sm quiet")}</div></div>
+<div class="field"><span class="field-label">Who can open it</span><div class="seg block" role="group">${[["public", "Anyone with the link"], ["team", p.settings.signin ? `${p.settings.signin} sign-in` : "Signed-in people"]].map(([v, l]) => `<button type="button" data-action="set" data-key="audience" data-val="${v}" class="${p.settings.audience === v ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
+<div class="field"><span class="field-label">Before it goes live</span><div class="checks"><div>${icon(p.stage === "built" ? "check" : "alert", 14, p.stage === "built" ? "add" : "del")}${p.stage === "built" ? "The app builds" : "Finish building first"}</div><div>${icon(checks.passed === checks.total ? "check" : "alert", 14, checks.passed === checks.total ? "add" : "del")}Sample questions: ${checks.passed} of ${checks.total} behave</div><div>${icon(reading ? "check" : "alert", 14, reading ? "add" : "del")}${reading ? `${esc(A().agent.name)} can read ${esc(p.sourceName)}` : "Source reading is off in Tools"}</div>${env.length ? `<div class="note-amber">${icon("alert", 15)}<span class="grow"><code>${esc(env.map((v) => v.name).join(", "))}</code> not set</span>${btn("Add", "settings", "btn sm")}</div>` : ""}</div></div>
+<button type="button" class="btn primary big arrow" data-action="release" ${p.stage !== "built" || build?.pid === p.id || upToDate ? "disabled" : ""}>${upToDate ? "Up to date" : latest ? `Publish version ${p.versions.at(-1).n}` : "Publish"}<span class="disc">${icon("arrow", 15)}</span></button>
+${p.releases.length ? releasesList() : ""}</div>`;
+}
+function releasesList() {
+  const latest = p.releases.at(-1);
+  return `<div class="versions"><span class="field-label">Releases</span>${p.releases
+    .slice()
+    .reverse()
+    .slice(0, 5)
+    .map((r) => `<div class="listrow"><div><strong>Release ${r.number}</strong><p>${ago(r.at)} · ${esc(describe(r))}</p></div><div class="row">${btn("Log", "deploy-log", "btn sm quiet", `data-id="${r.id}"`)}${r === latest ? `<span class="status live"><span class="dot live"></span>Live</span>` : btn("Roll back", "rollback", "btn sm", `data-id="${r.id}"`)}</div></div>`)
+    .join("")}</div>`;
+}
+function accountPop(where) {
+  return `<div class="pop" role="dialog" aria-label="Account" style="width:300px;${where === "home" ? "top:62px;right:24px" : ""}"><div class="row" style="gap:10px"><span class="avatar">${esc(initials())}</span><div><strong>${esc(db.account?.name || "Aman")}</strong><p class="small muted">${esc(db.account?.email || "")}</p></div></div><div class="menu">${where === "ws" ? btn(`${icon("settings", 15)}Project settings`, "settings", "") : ""}${btn(`${icon("bolt", 15)}1,240 credits · usage`, "usage", "")}${btn(`${icon("info", 15)}What’s real in this prototype`, "about", "")}${btn(`${icon("refresh", 15)}Reset demo data`, "reset-demo", "")}<hr>${btn(`${icon("logout", 15)}Sign out`, "signout", "")}</div></div>`;
+}
+const recipientUrl = (r) => `${location.origin}${location.pathname}?release=${r.id}`;
+
+// ---------- Shared views (published release, draft preview) ----------
+function findRelease(id) {
+  for (const x of db.projects) {
+    const r = x.releases.find((y) => y.id === id);
+    if (r) return r;
+  }
+  return null;
+}
+function sharedView() {
+  const target = releaseId ? findRelease(releaseId) : byId(previewId);
+  const badge = `<a class="made-with" href="./">${logo(18)}Made with Architect</a>`;
+  if (!target) {
+    app.innerHTML = `<div class="gate">${logo(34)}<h1 class="display" style="font-size:34px">This link isn’t available here.</h1><p class="muted">Prototype releases live in the browser that published them. Open Architect in that browser to see it.</p><a class="btn primary" href="./">Open Architect</a></div>`;
+    return;
+  }
+  const th = THEMES[target.settings.theme] || THEMES.forest;
+  document.body.style.background = th.bg;
+  if (releaseId && target.settings.audience === "team" && !sessionStorage.getItem("recipient-" + target.id)) {
+    app.innerHTML = `<div class="appview ${th.dark ? "dark" : ""}" style="${themeVars(th)};min-height:100vh"><div class="gate"><span class="a-mark" style="width:44px;height:44px;border-radius:12px;font-size:20px">${esc(target.name[0])}</span><h1 class="a-h" style="font-family:Georgia,serif;font-weight:400;font-size:34px">${esc(target.name)}</h1><p style="color:var(--a-muted)">Sign in to continue.</p><button type="button" class="a-btn" data-action="recipient-login" style="padding:12px 22px">${target.settings.signin === "Google" ? "Continue with Google" : target.settings.signin ? `Continue with ${esc(target.settings.signin)}` : "Continue with your work account"}</button></div></div>${badge}`;
+    return;
+  }
+  document.title = target.name;
+  app.innerHTML = `<div class="shared">${appView(target, { builder: false })}</div>${badge}`;
+}
+
+// ---------- Flows ----------
+function setHash() {
+  if (p && ui.view === "workspace") history.replaceState(null, "", `#${p.id}/${ui.tab}`);
+  else history.replaceState(null, "", location.pathname + location.search);
+}
+function resetWorkspaceUi() {
+  Object.assign(ui, { tab: "preview", pop: null, selecting: false, sel: "", page: "home", console: false, mode: "build", mobile: "chat", mention: false, codeFile: "", agentSel: "main", agentTab: "behavior", testResult: null, q: "", result: null, showSource: false, fb: "", pubStep: null, stick: true });
+}
+function openProject(id, tab = "preview") {
+  p = byId(id);
+  if (!p) return;
+  resetWorkspaceUi();
+  ui.view = "workspace";
+  ui.tab = tab;
+  if (p.chat.length === 0) p.chat.push({ role: "assistant", kind: "text", text: `Welcome back to ${p.name}. Ask for a change, or select something in the preview.` });
+  setHash();
   render();
-  if (next?.action === "import") act.import();
+}
+function goHome() {
+  closeModal();
+  ui.view = "home";
+  ui.pop = null;
+  p = null;
+  setHash();
+  render();
+  window.scrollTo({ top: 0 });
 }
 function requireAccount(action) {
   if (db.signedIn) return true;
-  pending = { action };
-  auth = { step: "choose", provider: "", email: "" };
-  view = "signin";
-  render();
-  window.scrollTo({ top: 0 });
+  pending = action;
+  auth = { step: "choose", email: "", busy: "" };
+  signinDialog();
   return false;
 }
-function importDialog() {
-  const f = importFlow;
-  if (f.step === "pick")
-    return dialog(
-      "Import from GitHub",
-      `<p class="muted">Architect asks for read access to the repositories you choose. Nothing is written until you sync.</p><div class="stack">${[
-        ["northstar/support-app", "React · LangGraph · team sign-in", true],
-        ["acme/inventory-bot", "Private · no demo fixture", false],
-        ["team/website", "Private · no demo fixture", false],
-      ]
-        .map(
-          ([repo, desc, ok]) =>
-            `<button class="listrow choice ${f.repo === repo ? "active" : ""}" data-action="import-repo" data-repo="${repo}" ${ok ? "" : "disabled"} style="width:100%;text-align:left"><div><strong>${repo}</strong><p>${desc}</p></div>${f.repo === repo ? tag("Selected", "good") : ok ? tag("Demo fixture", "blue") : ""}</button>`,
-        )
-        .join("")}</div><label for="import-branch">Branch</label><select id="import-branch"><option ${f.branch === "main" ? "selected" : ""}>main</option><option ${f.branch === "feature/citations" ? "selected" : ""}>feature/citations</option></select><p class="footer-note">Demo: only the Northstar fixture can be inspected. No GitHub access is requested.</p>`,
-      btn("Inspect repository", "import-scan", "primary", f.repo ? "" : "disabled"),
-    );
-  if (f.step === "zip")
-    return dialog(
-      "Import a codebase",
-      `<p>Select a ZIP of your project. Architect inspects frameworks, start commands and sign-in before anything changes.</p><label for="zip-file">Project archive</label><input id="zip-file" type="file" accept=".zip,application/zip"><p class="footer-note">Archive contents are not read in this prototype. After you choose a file, the Northstar fixture stands in for the inspection.</p>`,
-      null,
-    );
-  if (f.step === "scan")
-    return dialog(
-      "Inspecting " + esc(f.archive ? f.archive.name : f.repo),
-      `<ol class="progress-list">${[
-        ["Reading the project", f.archive ? `${f.archive.name} · ${Math.round(f.archive.size / 1024)} KB` : `${f.repo} · ${f.branch}`],
-        ["Detecting frameworks and sign-in", "package.json, requirements.txt, auth providers"],
-        ["Finding agents and data", "Workflows, prompts and knowledge files"],
-      ]
-        .map(([t, d], i) => `<li class="${i < f.scanStep ? "done" : i === f.scanStep ? "current" : ""}"><span class="progress-icon">${i < f.scanStep ? "✓" : i + 1}</span><div><strong>${t}</strong><small>${esc(d)}</small></div></li>`)
-        .join("")}</ol><p class="footer-note">Simulated inspection. Nothing is cloned or uploaded.</p>`,
-      null,
-    );
-  return dialog(
-    "What I found",
-    `<div class="listrow"><strong>App</strong><span>Northstar Support · React 18 + Vite</span></div><div class="listrow"><strong>Agent</strong><span>LangGraph workflow · <code>agents/graph.py</code></span></div><div class="listrow"><strong>Sign-in</strong><span>Team sign-in (Clerk)</span></div><div class="listrow"><strong>Data</strong><span><code>docs/handbook.md</code></span></div><div class="listrow"><strong>Deployed</strong><span>Vercel · production</span></div><div class="callout"><strong>We’ll keep</strong> your branding, sign-in, framework and data. Changes go to a working branch you review before syncing.</div><h4>What do you want to change first?</h4><div class="row wrap">${btn("Add supporting sources", "import-go", "small", 'data-change="citations"')}${btn("Shorter answers", "import-go", "small", 'data-change="length"')}${btn("Route unmatched to a person", "import-go", "small", 'data-change="none"')}${btn("Just look around", "import-go", "quiet small", 'data-change=""')}</div><p class="footer-note">${f.archive ? "Archive not read; " : ""}prepared fixture, not a repository scan.</p>`,
-    null,
-  );
+function signinDialog() {
+  const idea = pending?.brief;
+  const title = idea ? "Sign in to start building" : "Sign in to Architect";
+  const sub = idea ? "Your idea is saved. The build starts as soon as you’re in." : "Build apps and agents by describing them.";
+  let body;
+  if (auth.step === "sent")
+    body = `<div class="quote">We sent a sign-in link to <strong>${esc(auth.email)}</strong>. Open it on this device, or enter the code from the email.</div><form id="code-form" class="stack"><div class="field"><label class="field-label" for="code">Code</label><input id="code" value="ARCHITECT" autocomplete="one-time-code"></div><button class="btn primary big" type="submit">Continue</button></form><button type="button" class="link" data-action="auth-back" style="align-self:center">Use another way to sign in</button>`;
+  else
+    body = `${idea ? `<div class="quote"><span class="eyebrow" style="display:block;margin-bottom:6px">Your idea</span>${esc(idea.length > 220 ? idea.slice(0, 220) + "…" : idea)}</div>` : ""}<div class="stack">${btn(auth.busy === "Google" ? `${spinner(16)}Connecting to Google…` : `${googleLogo}Continue with Google`, "auth-provider", "provider", `data-provider="Google" autofocus ${auth.busy ? "disabled" : ""}`)}${btn(auth.busy === "GitHub" ? `${spinner(16)}Connecting to GitHub…` : `${icon("github", 18)}Continue with GitHub`, "auth-provider", "provider", `data-provider="GitHub" ${auth.busy ? "disabled" : ""}`)}</div><div class="or">or with work email</div><form id="email-form" class="stack"><label class="sr" for="email">Work email</label><input id="email" type="email" required placeholder="you@company.com" value="${esc(auth.email)}" style="height:48px"><button class="btn primary big" type="submit">Email me a sign-in link</button></form><p class="small muted" style="text-align:center">By continuing you agree to the Terms and Privacy Policy.</p><button type="button" class="link" data-action="auth-demo" style="align-self:center">Look around a demo workspace instead</button>`;
+  dialog(title, sub, body, "", { logo: true });
 }
-function runImportScan() {
-  importFlow.step = "scan";
-  importFlow.scanStep = 0;
-  importDialog();
-  clearInterval(importFlow.timer);
-  importFlow.timer = setInterval(() => {
-    if (!importFlow || !modal.open) return clearInterval(importFlow.timer);
-    importFlow.scanStep++;
-    if (importFlow.scanStep >= 3) {
-      clearInterval(importFlow.timer);
-      importFlow.step = "found";
+function finishSignIn(method, email) {
+  db.signedIn = true;
+  db.account = { name: /^aman/.test(email) ? "Aman" : cap(email.split("@")[0].replace(/[._-].*/, "")) || "You", email, method };
+  save();
+  auth = { step: "choose", email: "", busy: "" };
+  closeModal();
+  const next = pending;
+  pending = null;
+  toast(`Signed in with ${method}.`);
+  if (next?.type === "build") return startProject(next.brief, next.opts);
+  if (next?.type === "import") return act.import();
+  render();
+}
+
+// First build
+function introFor(x, read) {
+  const a = A(x);
+  let t = `Here’s the plan for ${x.name}.`;
+  if (!read.confident) t += ` I started from “${a.label}”, the closest of the three starting points this prototype builds. You can switch it below.`;
+  if (x.initialOps?.length) t += ` From your prompt: ${x.initialOps.join("; ").replace(/\.$/, "")}.`;
+  return t;
+}
+function firstSteps(x) {
+  const a = A(x),
+    setup = frameworkSetup(x),
+    checks = runChecks(x),
+    extra = x.agents || [];
+  return [
+    `Planned ${plural(x.pages.length, "page")}, ${plural(1 + extra.length, "agent")} and the data`,
+    `Laid out ${x.pages.map((y) => y.name).join(" and ")} · app/index.html, app/app.js`,
+    `Wrote ${a.agent.name} on ${x.settings.framework} · ${setup.entry}`,
+    ...extra.map((y) => `Added ${y.name}${y.channel ? ` · hands off on ${y.channel}` : ""}`),
+    `Loaded ${x.sourceName} · ${plural(x.source.split("\n").filter(Boolean).length, "entry", "entries")}`,
+    x.settings.signin ? `Added ${x.settings.signin} sign-in` : null,
+    `Checked ${checks.total} sample questions · ${checks.passed} of ${checks.total} behave as expected`,
+    "Started the preview",
+  ].filter(Boolean);
+}
+function startProject(text, opts = {}) {
+  const x = createProject(text, false, opts);
+  for (const f of ui.attachments) {
+    const fits = f.text && ((A(x).id === "insight" && /\.csv$/i.test(f.name)) || (A(x).id !== "insight" && /\.(txt|md)$/i.test(f.name) && /^[^:\n]{2,40}:/m.test(f.text)));
+    if (fits) {
+      x.source = f.text.trim();
+      x.sourceName = f.name.replace(/\.[^.]+$/, "");
+      x.sourceKind = "local";
     }
-    importDialog();
-  }, 500);
+  }
+  x.references = ui.attachments.map((f) => ({ name: f.name, kind: f.kind }));
+  for (const name of ui.homeAgents) {
+    const s = STUDIO_AGENTS.find((y) => y[0] === name);
+    x.agents.push({ id: crypto.randomUUID(), enabled: true, name: s[0], responsibility: s[1], trigger: "After the main agent answers", origin: `Lyzr Studio · ${s[2]}`, status: "Managed in Studio" });
+  }
+  x.builderModel = ui.model;
+  x.versions = [];
+  checkpoint(x, "First version");
+  const read = interpret(text);
+  x.chat.push({ role: "user", text });
+  x.chat.push({ role: "assistant", kind: "text", text: introFor(x, read) });
+  x.chat.push({ role: "assistant", kind: "plan", id: uid(), awaiting: ui.planFirst });
+  db.projects.unshift(x);
+  ui.attachments = [];
+  ui.homeAgents = [];
+  brief = "";
+  sessionStorage.removeItem("architect-draft-brief");
+  p = x;
+  resetWorkspaceUi();
+  ui.view = "workspace";
+  save();
+  setHash();
+  if (ui.planFirst) {
+    ui.planFirst = false;
+    render();
+  } else startFirstBuild();
 }
-function recordPreview(question) {
-  previewResult = answer(p, question);
-  showSource = false;
-  recordRun(p, question, previewResult);
+function startFirstBuild() {
+  ui.lastLvl = 0;
+  const m = { role: "assistant", kind: "build", id: uid(), first: true, steps: firstSteps(p), files: generateFiles(p).map((f) => ({ path: f.path, status: "A", add: f.text.split("\n").length, del: 0 })), versionN: p.versions[0].n, versionId: p.versions[0].id, started: Date.now() };
+  p.chat.push(m);
+  p.stage = "building";
+  save();
+  runSteps(m, 620, (x) => {
+    x.stage = "built";
+    m.secs = Math.max(4, Math.round((Date.now() - m.started) / 1000));
+  });
+}
+function runSteps(m, ms, done, from = 0) {
+  const proj = p;
+  clearInterval(build?.timer);
+  build = { pid: proj.id, msgId: m.id, step: from, proj, m, done };
+  build.timer = setInterval(() => {
+    build.step++;
+    if (build.step >= m.steps.length) {
+      clearInterval(build.timer);
+      build = null;
+      delete m.paused;
+      m.done = true;
+      done(proj);
+      save();
+    }
+    render();
+  }, ms);
+  ui.stick = true;
+  render();
+}
+
+// Changes from chat
+const INTROS = { settings: "On it.", page: "Adding the page.", agent: "Adding an agent for that.", instructions: "Updating the agent’s instructions.", rename: "Renaming it.", copy: "Updating the text.", tools: "Giving the agent that ability.", removePage: "Removing the page." };
+function autoCommit(x, label) {
+  if (!x.git.connected || x.git.auto === false) return;
+  x.git.committedRevision = x.revision;
+  x.git.syncedRevision = x.revision;
+  x.git.lastMessage = label;
+  x.git.lastCommit = uid().slice(0, 7);
+}
+function runChange(ops, intro) {
+  if (build) return toast("Wait for the current change to finish.");
+  const dry = clone(p);
+  const { files } = applyOps(dry, ops);
+  const descs = ops.flatMap((op) => describeOp(p, op).split(" · "));
+  const touched = files.filter((f) => f.status === "M").slice(0, 2).map((f) => f.path.split("/").pop());
+  const m = { role: "assistant", kind: "build", id: uid(), intro: intro || INTROS[ops[0].type] || "On it.", steps: [`Read ${touched.join(" and ") || "the project"}`, ...descs, `Updated ${plural(files.length, "file")}`, "Refreshed the preview"], files, ops };
+  p.chat.push(m);
+  save();
+  runSteps(m, 460, (x) => {
+    const res = applyOps(x, ops);
+    m.files = res.files;
+    m.versionN = res.version.n;
+    m.versionId = res.version.id;
+    delete m.ops;
+    autoCommit(x, res.version.label);
+    if (x === p) {
+      ui.result = ui.q && ui.result ? answer(x, ui.q) : null;
+      ui.fb = "";
+      const page = ops.find((o) => o.type === "page");
+      if (page) ui.page = page.page.id;
+      if (ops.some((o) => o.type === "removePage" && o.id === ui.page)) ui.page = "home";
+    }
+  });
+}
+function quickChange(ops, message) {
+  const res = applyOps(p, ops);
+  autoCommit(p, res.version.label);
+  ui.result = ui.result && ui.q ? answer(p, ui.q) : null;
+  save();
+  render();
+  if (modal.open && modal.dataset.kind === "settings") settingsDialog();
+  toast(`${message || describeOp(p, ops[0]).split(" · ")[0]} · version ${res.version.n}`);
+}
+function guessName(text) {
+  const words = text
+    .replace(/[^\w\s'-]/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const skip = new Set("please can you could we i want need would like to add make create build show let have give a an the some new me us it my our".split(" "));
+  const stop = new Set("of for with that where to on in which who so and or when about by from".split(" "));
+  const out = [];
+  for (const w of words) {
+    if (!out.length && skip.has(w)) continue;
+    if (stop.has(w)) break;
+    out.push(w);
+    if (out.length === 3) break;
+  }
+  return out.length ? cap(out.join(" ")).replace(/\b\w/g, (c) => c.toUpperCase()) : "New";
+}
+function sendMessage(text) {
+  if (!text) return;
+  const sel = ui.sel ? EL_LABELS[ui.sel] : "";
+  p.chat.push({ role: "user", text, sel });
+  p.unsent = "";
+  ui.stick = true;
+  const det = detectOps(p, text, ui.sel);
+  if (det.undo) {
+    const prev = p.versions.at(-2);
+    if (!prev) {
+      p.chat.push({ role: "assistant", kind: "text", text: "There’s nothing to undo yet. This is the first version." });
+      save();
+      return render();
+    }
+    return restore(prev.id);
+  }
+  if (det.device) ui.device = det.device;
+  if (det.ops.length) {
+    if (ui.mode === "plan") {
+      const dry = clone(p);
+      const { files } = applyOps(dry, det.ops);
+      p.chat.push({ role: "assistant", kind: "proposal", id: uid(), text: "Here’s what I’d do. Nothing changes until you say build.", steps: det.ops.flatMap((op) => describeOp(p, op).split(" · ")), files, ops: det.ops });
+      save();
+      return render();
+    }
+    save();
+    return runChange(det.ops);
+  }
+  if (det.device) {
+    p.chat.push({ role: "assistant", kind: "text", text: "The app already adapts to small screens. I switched the preview to phone size so you can check it." });
+    save();
+    return render();
+  }
+  if (det.data) {
+    p.chat.push({ role: "assistant", kind: "text", text: `Paste or import it in Data and ${A().agent.name} answers from it straight away.`, action: { label: "Open Data", do: "tab-arg", arg: "data" } });
+    save();
+    return render();
+  }
+  if (/\b(premium|modern|clean|minimal|beautiful|prettier|pretty|nicer|elegant|polish\w*|sleek|fun|playful|bold|fresh|calmer|warmer|look(s)? (better|nicer|good)|design|style|vibe)\b/i.test(text)) {
+    const looks = Object.entries(THEMES).filter(([k]) => k !== p.settings.theme).slice(0, 3);
+    p.chat.push({
+      role: "assistant",
+      kind: "clarify",
+      id: uid(),
+      text: "Here are three looks for it. Pick one and I’ll apply it; you can fine-tune by selecting anything in the preview.",
+      options: looks.map(([k, th]) => ({ label: `${th.label}${th.dark ? ": dark background, bright accent" : `: ${k === "plum" ? "deep plum accent" : k === "amber" ? "warm terracotta accent" : k === "ocean" ? "calm blue accent" : "quiet green accent"}`}`, ops: [{ type: "settings", change: { theme: k } }] })),
+    });
+    save();
+    return render();
+  }
+  const name = guessName(text);
+  p.chat.push({
+    role: "assistant",
+    kind: "clarify",
+    id: uid(),
+    text: "I can build that a few ways. Which fits?",
+    options: [
+      { label: `Add a “${name}” page`, ops: [{ type: "page", page: { id: slug(name) + "-" + uid().slice(0, 4), name, kind: pageKind(name) } }] },
+      { label: `Tell ${A().agent.name} to do it`, ops: [{ type: "instructions", line: text.replace(/\s+/g, " ").slice(0, 160) }] },
+      { label: "Plan it with me first", plan: true },
+    ],
+  });
+  save();
+  render();
+}
+function restore(id) {
+  if (build) return toast("Wait for the current change to finish.");
+  const v = p.versions.find((x) => x.id === id);
+  const res = restoreVersion(p, id);
+  if (!res) return;
+  autoCommit(p, res.version.label);
+  p.chat.push({ role: "assistant", kind: "build", id: uid(), intro: `Back to version ${v.n}.`, steps: [`Restored version ${v.n}: ${v.label}`, "Refreshed the preview"], files: res.files, done: true, versionN: res.version.n, versionId: res.version.id });
+  ui.result = null;
+  ui.page = "home";
+  ui.pop = null;
+  save();
+  render();
+  toast(`Restored version ${v.n}. Saved as version ${res.version.n}.`);
+}
+function startPublish() {
+  ui.pubStep = 0;
+  render();
+  clearInterval(pubTimer);
+  const proj = p;
+  pubTimer = setInterval(() => {
+    if (p !== proj) return clearInterval(pubTimer);
+    ui.pubStep++;
+    if (ui.pubStep >= 3) {
+      clearInterval(pubTimer);
+      const r = publish(p);
+      p.stage = "built";
+      save();
+      ui.pubStep = "live";
+      ui.lastRelease = r;
+    }
+    render();
+  }, 700);
+}
+function recordPreview(q) {
+  ui.fresh = true;
+  setTimeout(() => (ui.fresh = false), 50);
+  ui.q = q;
+  ui.result = answer(p, q);
+  ui.showSource = false;
+  ui.fb = "";
+  recordRun(p, q, ui.result);
   save();
 }
 function downloadBlob(blob, name) {
@@ -704,739 +1084,672 @@ function downloadBlob(blob, name) {
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
+async function copy(text, done) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done);
+  } catch {
+    toast(text);
+  }
+}
+
+// Import
+function importDialog() {
+  const f = importFlow;
+  if (f.step === "pick")
+    return dialog(
+      "Import from GitHub",
+      "Architect reads the repository first. Nothing is written until you ask for a change.",
+      `<label class="sr" for="repo-search">Search repositories</label><input id="repo-search" placeholder="Search your repositories" value="northstar"><div class="stack">${[["northstar/support-app", "React · LangGraph · team sign-in · updated 3 days ago"]].map(([r, d]) => `<button type="button" class="choice ${f.repo === r ? "on" : ""}" data-action="import-repo" data-repo="${r}">${icon("github", 20)}<span class="grow"><b>${r}</b><small>${d}</small></span>${f.repo === r ? icon("check", 16) : ""}</button>`).join("")}</div><div class="field"><label class="field-label" for="import-branch">Branch</label><select id="import-branch"><option>main</option><option ${f.branch === "feature/citations" ? "selected" : ""}>feature/citations</option></select></div>`,
+      `${btn("Grant access to more repositories", "import-more", "btn quiet")}${btn("Read this repository", "import-scan", "btn primary", f.repo ? "" : "disabled")}`,
+    );
+  if (f.step === "zip")
+    return dialog("Upload a project", "A ZIP of your codebase. Architect reads the frameworks, start commands and sign-in before changing anything.", `<label class="choice" style="cursor:pointer;justify-content:center;padding:26px;border-style:dashed">${icon("upload", 20)}<span><b>Choose a .zip</b><small>Or drop it here</small></span><input id="zip-file" type="file" accept=".zip,application/zip" class="sr"></label>`);
+  if (f.step === "scan") {
+    const lines = [
+      [`Read ${f.archive ? f.archive.name : `${f.repo} · ${f.branch}`}`, f.archive ? `${Math.round(f.archive.size / 1024)} KB` : "214 files"],
+      ["App", "React 18 with Vite, 12 pages"],
+      ["Agent", "One LangGraph graph in agents/graph.py"],
+      ["Sign-in", "Clerk, team accounts"],
+      ["Data", "docs/handbook.md"],
+      ["Hosting", "Vercel, production"],
+    ];
+    return dialog(
+      f.scanStep >= lines.length ? "What we found" : "Reading your project…",
+      f.scanStep >= lines.length ? "We keep your framework, sign-in, data and hosting. Changes go to a branch you review." : "",
+      `<div class="steps" style="font-size:14px">${lines.map(([t, d], k) => (k < f.scanStep ? `<div class="step">${icon("check", 15, "add")}<span><b style="font-weight:600">${esc(t)}</b> · ${esc(d)}</span></div>` : k === f.scanStep ? `<div class="step current">${spinner(15)}<span>${esc(t)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(t)}</span></div>`)).join("")}</div>${f.scanStep >= lines.length ? `<div class="stack" style="gap:8px"><span class="field-label" style="margin:0">What would you like to do first?</span><div class="row wrap">${btn("Show sources under answers", "import-go", "chip", 'data-change="citations"')}${btn("Shorter answers", "import-go", "chip", 'data-change="length"')}${btn("Just look around", "import-go", "chip", 'data-change=""')}</div></div>` : ""}`,
+      f.scanStep >= lines.length ? arrowBtn("Open in workspace", "import-go", "", 'data-change=""') : "",
+    );
+  }
+  return dialog(
+    "Bring a project into Architect",
+    "Keep working on something you already built. Architect reads it first and changes nothing until you ask.",
+    `<div class="stack">${btn(`${icon("github", 22)}<span class="grow"><b>From GitHub</b><small>Pick a repository and branch</small></span>${icon("right", 16)}`, "import-github", "choice")}${btn(`${icon("upload", 22)}<span class="grow"><b>Upload a ZIP</b><small>A folder with your code</small></span>${icon("right", 16)}`, "import-zip-step", "choice")}${btn(`${icon("grid", 22)}<span class="grow"><b>Try the example</b><small>Northstar Support: React, team sign-in and a LangGraph agent</small></span>${icon("right", 16)}`, "import-sample", "choice")}</div>`,
+  );
+}
+function runImportScan() {
+  importFlow.step = "scan";
+  importFlow.scanStep = 0;
+  importDialog();
+  clearInterval(importFlow.timer);
+  importFlow.timer = setInterval(() => {
+    if (!importFlow || !modal.open) return clearInterval(importFlow?.timer);
+    importFlow.scanStep++;
+    if (importFlow.scanStep >= 6) clearInterval(importFlow.timer);
+    importDialog();
+  }, 420);
+}
+function createImported(change) {
+  const x = createProject("Northstar Support: an existing React app with team sign-in and a LangGraph workflow.", true);
+  x.baselineFramework = "LangGraph";
+  x.settings.length = "detailed";
+  x.settings.citations = false;
+  x.importedAt = new Date().toISOString();
+  x.git = { ...x.git, repo: importFlow?.repo || "northstar/support-app", branch: importFlow?.branch || "main", connected: true, committedRevision: 1, syncedRevision: 1, auto: true, lastMessage: "Imported into Architect", lastCommit: uid().slice(0, 7) };
+  x.versions = [];
+  checkpoint(x, "Imported from GitHub");
+  x.chat.push({ role: "assistant", kind: "text", text: `Imported ${x.git.repo}. It’s a React app with team sign-in and a LangGraph agent; all three stay as they are. The preview runs your current version.` });
+  db.projects.unshift(x);
+  save();
+  closeModal();
+  p = x;
+  resetWorkspaceUi();
+  ui.view = "workspace";
+  setHash();
+  render();
+  const first = change === "citations" ? "show the sources under each answer" : change === "length" ? "make the answers shorter" : "";
+  if (first) sendMessage(cap(first));
+}
+
+// ---------- Actions ----------
 const act = {
-  home: () => {
-    clearInterval(buildTimer);
-    clearInterval(readTimer);
-    clearInterval(publishTimer);
-    proposal = null;
-    selection = "";
-    previewQuestion = "";
-    previewResult = null;
-    shape = null;
-    pending = null;
-    view = "home";
-    p = null;
-    history.replaceState(null, "", location.pathname);
-    render();
-    window.scrollTo({ top: 0 });
-  },
+  home: () => goHome(),
   open: (el) => openProject(el.dataset.id),
-  nav: (el) => nav(el.dataset.view),
-  preview: () => nav("app"),
-  "toggle-chat": () => {
-    chatOpen = !chatOpen;
+  close: () => closeModal(),
+  "home-tab": (el) => {
+    ui.homeTab = el.dataset.tab;
     render();
   },
-  close: () => modal.close(),
-  about: () =>
-    dialog(
-      "What works in this prototype?",
-      `<p><strong>Real, local interactions:</strong> brief interpretation into three starting patterns, saved projects, plan edits with review and undo, a chat that proposes changes, source editing, deterministic example answers, recorded runs with traces, generated source files and a real ZIP download, revision history, release snapshots with rollback, and a working recipient view.</p><p><strong>Simulated:</strong> sign-in providers, AI generation, repository inspection, agent runtimes, GitHub commit and sync, deployment URLs and DNS. No credentials are requested or sent.</p><p>Each pattern uses keyword matching against local source text; other inputs demonstrate the no-answer path. Releases are available only in this browser.</p>`,
-    ),
+  "pop-account": () => {
+    ui.pop = ui.pop === "account" ? null : "account";
+    render();
+  },
+  pop: (el) => {
+    const next = el.dataset.pop;
+    ui.pop = ui.pop === next ? null : next;
+    if (ui.pop === "publish" && typeof ui.pubStep !== "number") ui.pubStep = p.releases.length && p.releases.at(-1).revision === p.revision ? "live" : null;
+    ui.mention = false;
+    closeModal();
+    render();
+  },
   signin: () => {
-    auth = { step: "choose", provider: "", email: "" };
-    view = "signin";
-    render();
-    window.scrollTo({ top: 0 });
-  },
-  "auth-choose": () => {
-    auth.step = "choose";
-    render();
-  },
-  "auth-email": () => {
-    auth.step = "email";
-    render();
-    document.querySelector("#email")?.focus();
+    pending = null;
+    auth = { step: "choose", email: "", busy: "" };
+    signinDialog();
   },
   "auth-provider": (el) => {
-    auth.provider = el.dataset.provider;
-    auth.step = "provider";
-    render();
+    auth.busy = el.dataset.provider;
+    signinDialog();
+    setTimeout(() => finishSignIn(auth.busy, "aman@demo.architect"), 900);
   },
-  "auth-account": (el) => finishSignIn(auth.provider, el.dataset.email),
-  "auth-resend": () => toast("Demo: link resent (nothing is actually sent)."),
+  "auth-back": () => {
+    auth.step = "choose";
+    signinDialog();
+  },
   "auth-demo": () => finishSignIn("Demo", "aman@demo.architect"),
-  account: () =>
-    dialog(
-      "Account",
-      `<div class="listrow"><div><strong>${esc(db.account?.name || "Aman")}</strong><p>${esc(db.account?.email || "aman@demo.architect")} · ${esc(db.account?.method || "Demo")} sign-in</p></div>${tag("Demo account")}</div><div class="listrow"><div><strong>Workspace</strong><p>Demo workspace · projects saved in this browser</p></div></div><div class="listrow"><div><strong>Reset demo data</strong><p>Removes every project and release stored in this browser.</p></div>${btn("Reset…", "reset-demo", "danger small")}</div>`,
-      btn("Prototype details", "about") + btn("Sign out", "signout", "primary"),
-    ),
   signout: () => {
     db.signedIn = false;
     db.account = null;
     save();
-    modal.close();
-    act.home();
+    ui.pop = null;
+    goHome();
     toast("Signed out. Your projects stay in this browser.");
   },
-  "reset-demo": () =>
+  about: () => {
+    ui.pop = null;
     dialog(
-      "Reset demo data?",
-      `<p>This removes ${db.projects.length} project${db.projects.length === 1 ? "" : "s"} and every release saved in this browser. It cannot be undone.</p>`,
-      btn("Keep everything", "close") + btn("Reset demo data", "reset-confirm", "danger"),
-    ),
+      "What’s real in this prototype",
+      "Architect 2.0 is a working prototype. Everything runs in your browser; a few services are stand-ins.",
+      `<div class="two"><div class="card tint-sage"><h3>Real</h3><ul class="trace" style="margin-top:8px"><li>Any prompt becomes a project with pages, agents, data and sample content in its subject</li><li>Chat changes the app, its agent and its code, with every version restorable</li><li>Answers, routing and number questions over your own text</li><li>Generated source as a runnable project and a real ZIP</li><li>Runs with traces, releases with rollback, and a working link for each release</li></ul></div><div class="card tint-sand"><h3>Stand-ins</h3><ul class="trace" style="margin-top:8px"><li>Sign-in providers and email links</li><li>Language models: matching is deterministic</li><li>GitHub, repository import and hosting</li><li>Other agent frameworks: files are written, not run</li></ul><p class="hint" style="margin-top:10px">Projects and releases live in this browser’s storage.</p></div></div>`,
+      "",
+      { wide: true },
+    );
+  },
+  usage: () => {
+    ui.pop = null;
+    const n = db.projects.length;
+    dialog("Usage", "This month, across your workspace.", `<div class="two"><div class="card tint-sand"><span class="eyebrow">Credits left</span><div class="display" style="font-size:40px;margin-top:6px">1,240</div><p class="hint">of 2,000 on the Team plan</p></div><div class="card tint-mist"><span class="eyebrow">Projects</span><div class="display" style="font-size:40px;margin-top:6px">${n}</div><p class="hint">${plural(db.projects.reduce((s, x) => s + (x.runs || []).length, 0), "agent run")} recorded</p></div></div>`);
+  },
+  "reset-demo": () => {
+    ui.pop = null;
+    dialog("Reset demo data?", `This removes ${plural(db.projects.length, "project")} and every release saved in this browser. It can’t be undone.`, "", btn("Keep everything", "close") + btn("Reset", "reset-confirm", "btn danger"));
+  },
   "reset-confirm": () => {
     db = { projects: [], signedIn: false };
     save();
-    modal.close();
-    act.home();
+    goHome();
     toast("Demo data reset.");
   },
-  start: () => {
-    brief = document.querySelector("#brief")?.value.trim() ?? brief;
-    sessionStorage.setItem("architect-draft-brief", brief);
-    if (!brief) return toast("Describe what you want to build first.");
-    if (!requireAccount("shape")) return;
-    startShaping();
+  templates: () => {
+    ui.pop = null;
+    dialog("Start from a template", "Each one builds a working app you can change by chatting.", `<div class="tpl-grid">${TEMPLATES.map(([n, d], i) => `<button type="button" class="tpl" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i])}<span><b>${n}</b><small>${d}</small></span></button>`).join("")}</div>`, "", { wide: true });
   },
-  "shape-now": () => {
-    clearInterval(readTimer);
-    view = "shape";
+  "use-template": (el) => {
+    closeModal();
+    const text = TEMPLATES[+el.dataset.i][2];
+    brief = text;
+    if (!requireAccount({ type: "build", brief: text })) return;
+    startProject(text);
+  },
+  consult: () => {
+    ui.pop = null;
+    const q = act.consult.q || (act.consult.q = { who: "My team", what: "Answer questions", about: "" });
+    const chips = (key, list) => `<div class="row wrap">${list.map((x) => btn(x, "consult-pick", `chip ${q[key] === x ? "on" : ""}`, `data-key="${key}" data-val="${x}"`)).join("")}</div>`;
+    dialog("Let’s find a good first app", "The best first app takes one job off someone’s plate. Three quick questions.", `<div class="stack"><span class="field-label">Who will use it?</span>${chips("who", ["My team", "Customers", "Students", "Patients"])}<span class="field-label" style="margin-top:6px">What should it do for them?</span>${chips("what", ["Answer questions", "Sort requests", "Explain our numbers"])}<label class="field-label" for="consult-about" style="margin-top:6px">What is it about?</label><input id="consult-about" placeholder="For example: leave policy, refunds, class bookings" value="${esc(q.about)}"></div>`, arrowBtn("Use this idea", "consult-use"));
+  },
+  "consult-pick": (el) => {
+    act.consult.q[el.dataset.key] = el.dataset.val;
+    act.consult.q.about = document.querySelector("#consult-about")?.value || act.consult.q.about;
+    act.consult();
+  },
+  "consult-use": () => {
+    const q = act.consult.q;
+    const about = (document.querySelector("#consult-about")?.value || "").trim() || "our most common questions";
+    const who = q.who === "My team" ? "my team" : q.who.toLowerCase();
+    brief = q.what === "Answer questions" ? `An assistant where ${who} ask questions about ${about} and get answers with the source.` : q.what === "Sort requests" ? `An inbox where ${who} send requests about ${about}, and each one is routed to the right person with a priority.` : `A dashboard where ${who} ask about the numbers for ${about} and see the rows behind every answer.`;
+    sessionStorage.setItem("architect-draft-brief", brief);
+    closeModal();
+    render();
+    document.querySelector("#brief")?.focus();
+  },
+  attach: () =>
+    dialog("Add context", "Screenshots, documents or links help Architect match what you have in mind. Text files become the app’s content.", `<label class="choice" style="cursor:pointer">${icon("upload", 20)}<span class="grow"><b>Upload a file</b><small>.txt, .md or .csv become the app’s data · images and PDFs are kept as references</small></span><input id="attach-file" type="file" class="sr" accept=".txt,.md,.csv,.png,.jpg,.jpeg,.pdf"></label><form id="link-form" class="stack" style="gap:8px"><label class="field-label" for="attach-link" style="margin:0">Or paste a link</label><div class="row"><input id="attach-link" type="url" placeholder="Figma, a website, or a doc" required><button class="btn" type="submit">Add</button></div></form>`),
+  "attach-chat": () => act.attach(),
+  "remove-attachment": (el) => {
+    ui.attachments.splice(+el.dataset.i, 1);
     render();
   },
-  "pick-pattern": (el) => {
-    shape.archetype = el.dataset.archetype;
-    if (shape.autoNamed)
-      shape.name = ARCHETYPES[shape.archetype].nameFor(
-        subjectFor(shape.archetype, shape.brief),
-      );
+  "toggle-plan": () => {
+    ui.planFirst = !ui.planFirst;
+    render();
+  },
+  studio: () => {
+    ui.pop = null;
+    dialog("Use your agents", "Agents from Lyzr Studio keep their owner and settings. Architect wires them into the new app.", `<div class="stack">${STUDIO_AGENTS.map(([n, r, o]) => `<button type="button" class="choice ${ui.homeAgents.includes(n) ? "on" : ""}" data-action="toggle-studio" data-name="${n}"><span class="ag" style="width:34px;height:34px;border-radius:10px;background:var(--mist);display:inline-flex;align-items:center;justify-content:center">${icon("bot", 17)}</span><span class="grow"><b>${n}</b><small>${r} · owned by ${o}</small></span>${ui.homeAgents.includes(n) ? icon("check", 16) : ""}</button>`).join("")}</div>`, btn("Done", "close", "btn primary"));
+  },
+  "toggle-studio": (el) => {
+    const n = el.dataset.name;
+    ui.homeAgents = ui.homeAgents.includes(n) ? ui.homeAgents.filter((x) => x !== n) : [...ui.homeAgents, n];
+    act.studio();
     render();
   },
   import: () => {
-    if (!requireAccount("import")) return;
+    ui.pop = null;
+    if (!requireAccount({ type: "import" })) return;
     importFlow = { step: "choose", repo: "", branch: "main", scanStep: 0 };
-    dialog(
-      "Continue an existing project",
-      `<p>Choose how you would bring your work into Architect. Nothing changes until you pick a change after inspection.</p><div class="stack">${btn("Connect a GitHub repository", "import-github")}${btn("Import a ZIP or codebase", "import-zip")}</div><div class="callout"><strong>Try the imported-project example</strong><p>Northstar Support: an existing React app, team sign-in and LangGraph workflow. Inspect it before changing it.</p></div>`,
-      btn("Inspect sample project", "import-sample", "primary"),
-    );
+    importDialog();
+  },
+  "import-zip": () => {
+    act.import();
+    if (importFlow) {
+      importFlow.step = "zip";
+      importDialog();
+    }
   },
   "import-github": () => {
-    importFlow = { ...importFlow, step: "pick", repo: "", branch: "main" };
+    importFlow.step = "pick";
+    importFlow.repo = "northstar/support-app";
+    importDialog();
+  },
+  "import-zip-step": () => {
+    importFlow.step = "zip";
     importDialog();
   },
   "import-repo": (el) => {
     importFlow.repo = el.dataset.repo;
-    importFlow.branch = document.querySelector("#import-branch")?.value || "main";
     importDialog();
   },
+  "import-more": () => toast("GitHub would open here to grant access to more repositories."),
   "import-scan": () => {
-    importFlow.branch = document.querySelector("#import-branch")?.value || importFlow.branch;
+    importFlow.branch = document.querySelector("#import-branch")?.value || "main";
     runImportScan();
-  },
-  "import-zip": () => {
-    importFlow = { ...importFlow, step: "zip" };
-    importDialog();
   },
   "import-sample": () => {
-    importFlow = { ...importFlow, repo: "northstar/support-app", branch: "feature/citations" };
+    importFlow.repo = "northstar/support-app";
+    importFlow.branch = "main";
     runImportScan();
   },
-  "import-go": (el) => {
-    const change = el.dataset.change;
-    modal.close();
-    create(true);
-    const first =
-      change === "citations"
-        ? { citations: true }
-        : change === "length"
-          ? { length: "short" }
-          : change === "none"
-            ? { unknown: "explain" }
-            : null;
-    if (first) {
-      p.chat.push({
-        role: "user",
-        text: el.textContent.trim(),
-      });
-      p.chat.push({
-        role: "assistant",
-        text: "Here’s the focused change on top of the imported baseline. Review it before it applies.",
-      });
-      save();
-      propose(first);
-    }
-  },
-  examples: () =>
-    dialog(
-      "Start from a useful example",
-      `<div class="stack">${EXAMPLES.map(([t, d], i) => `<div class="panel" style="margin:0"><div class="row between wrap"><div><h3 style="margin-bottom:4px">${t}</h3><p style="margin:0" class="muted">${d}</p></div>${btn("Use this example", "use-example", "primary small", `data-example="${i}"`)}</div></div>`).join("")}</div>`,
-    ),
-  "use-example": (el) => {
-    brief = EXAMPLES[+el.dataset.example][2];
-    sessionStorage.setItem("architect-draft-brief", brief);
-    modal.close();
-    if (!requireAccount("shape")) return;
-    startShaping();
-  },
-  consult: () =>
-    dialog(
-      "Start with the repeated task",
-      `<p>A good first app helps someone finish a recurring task.</p><label for="task-idea">What question or task keeps coming back?</label><textarea id="task-idea" placeholder="For example: teammates ask about leave policies"></textarea>`,
-      btn("Use this as my brief", "use-task", "primary"),
-    ),
-  "use-task": () => {
-    const t = document.querySelector("#task-idea").value.trim();
-    if (!t) return toast("Add a task first.");
-    brief = t;
-    sessionStorage.setItem("architect-draft-brief", brief);
-    modal.close();
+  "import-go": (el) => createImported(el.dataset.change),
+  // Workspace
+  tab: (el) => {
+    ui.tab = el.dataset.tab;
+    ui.pop = null;
+    if (ui.tab !== "preview") ui.selecting = false;
+    ui.mobile = "app";
+    setHash();
     render();
   },
-  reference: () =>
-    dialog(
-      "Add context to your idea",
-      `<p>Source text can be edited or imported as a local .txt or .csv file once the project opens. No documents are sent to a model.</p><p>For the demo, begin with the included sample content, then open Knowledge to change it.</p>`,
-    ),
-  select: (el) => {
-    selection = el.dataset.target;
-    render();
-    document
-      .querySelector(".editor")
-      ?.scrollIntoView({ block: "nearest", behavior: "auto" });
-  },
-  "clear-select": () => {
-    selection = "";
+  "tab-arg": (el) => act.tab({ dataset: { tab: el.dataset.arg } }),
+  mobile: (el) => {
+    ui.mobile = el.dataset.k;
     render();
   },
-  "edit-behavior": () => {
-    selection = "Answer";
-    agentSel = "main";
-    if (!["plan", "app", "agents"].includes(view)) view = "agents";
+  mode: (el) => {
+    ui.mode = el.dataset.k;
     render();
-    document
-      .querySelector(".editor")
-      ?.scrollIntoView({ block: "nearest", behavior: "auto" });
+    document.querySelector("#chat-input")?.focus();
   },
-  "suggest-short": () =>
-    propose({ length: p.settings.length === "short" ? "detailed" : "short" }),
-  "suggest-ask": () =>
-    propose({ unknown: p.settings.unknown === "ask" ? "explain" : "ask" }),
-  "suggest-citations": () => propose({ citations: true }),
-  "review-proposal": () => proposalDialog(),
-  "cancel-proposal": () => {
-    proposal = null;
-    modal.close();
+  suggest: (el) => sendMessage(el.dataset.text),
+  mention: () => {
+    ui.mention = !ui.mention;
     render();
   },
-  "apply-proposal": () => {
-    const changed = settingsChange(p, proposal, "Updated behavior");
-    proposal = null;
-    modal.close();
-    if (changed) {
-      p.chat.push({
-        role: "assistant",
-        text: `Plan, preview, ${A().agent.name} and generated code updated. ` + summary(p.settings),
-      });
-      save();
-      previewResult = null;
-      render();
-      toast("Change applied across your project.");
+  "insert-mention": (el) => {
+    ui.mention = false;
+    p.unsent = `${(p.unsent || "").replace(/@$/, "")}@${el.dataset.text} `;
+    render();
+    const t = document.querySelector("#chat-input");
+    t?.focus();
+    t?.setSelectionRange(t.value.length, t.value.length);
+  },
+  stop: () => {
+    if (!build) return;
+    clearInterval(build.timer);
+    const m = build.m;
+    if (m.first) {
+      m.paused = build.step;
+      build = null;
+      toast("Paused. Resume whenever you’re ready.");
     } else {
-      render();
-      toast("These settings already match your project.");
+      m.cancelled = true;
+      m.stoppedAt = build.step;
+      m.done = false;
+      delete m.ops;
+      build = null;
     }
-  },
-  undo: () => {
-    if (undo(p)) {
-      save();
-      previewResult = null;
-      render();
-      toast("Last settings change undone. Existing releases are unchanged.");
-    }
-  },
-  build: () => startBuild(),
-  "pause-build": () => {
-    clearInterval(buildTimer);
-    view = "plan";
+    save();
     render();
-    toast("Build paused. Your plan and edits are saved.");
+  },
+  "resume-build": (el) => {
+    const m = p.chat.find((x) => x.id === el.dataset.id);
+    runSteps(m, 620, (x) => {
+      x.stage = "built";
+      m.secs = Math.max(4, Math.round((Date.now() - m.started) / 1000));
+    }, m.paused || 0);
+  },
+  "approve-plan": (el) => {
+    const m = p.chat.find((x) => x.id === el.dataset.id);
+    m.awaiting = false;
+    startFirstBuild();
+  },
+  "edit-plan": () => {
+    p.chat.push({ role: "assistant", kind: "text", text: "Tell me what to change: pages, agents, sign-in or the look. You can also switch the starting point below the plan." });
+    save();
+    render();
+    document.querySelector("#chat-input")?.focus();
+  },
+  "switch-start": () =>
+    dialog("Change the starting point", "The engine the app is built on. Your name, look, agents and sign-in stay.", `<div class="stack">${Object.values(ARCHETYPES).map((a) => `<button type="button" class="choice ${a.id === p.archetype ? "on" : ""}" data-action="switch-to" data-id="${a.id}"><span class="grow"><b>${a.label}</b><small>${a.blurb}</small></span>${a.id === p.archetype ? icon("check", 16) : ""}</button>`).join("")}</div>`),
+  "switch-to": (el) => {
+    if (el.dataset.id === p.archetype) return closeModal();
+    const a = ARCHETYPES[el.dataset.id];
+    const res = switchArchetype(p, el.dataset.id);
+    autoCommit(p, res.version.label);
+    p.chat.push({ role: "assistant", kind: "build", id: uid(), intro: `Rebuilt ${p.name} as “${a.label}”.`, steps: [`Switched the engine to ${a.label}`, `Loaded ${p.sourceName}`, `Laid out ${p.pages.map((x) => x.name).join(" and ")}`, "Refreshed the preview"], files: res.files, done: true, versionN: res.version.n, versionId: res.version.id });
+    ui.result = null;
+    ui.page = "home";
+    closeModal();
+    save();
+    render();
+  },
+  clarify: (el) => {
+    const m = p.chat.find((x) => x.id === el.dataset.id);
+    const o = m.options[+el.dataset.k];
+    m.chosen = +el.dataset.k;
+    if (o.plan) {
+      ui.mode = "plan";
+      p.chat.push({ role: "assistant", kind: "text", text: "Tell me more: where should it live, and what should people see or be able to do? I’ll lay out the steps before building." });
+      save();
+      render();
+      return document.querySelector("#chat-input")?.focus();
+    }
+    save();
+    runChange(o.ops);
+  },
+  "proposal-build": (el) => {
+    const m = p.chat.find((x) => x.id === el.dataset.id);
+    m.state = "built";
+    ui.mode = "build";
+    runChange(m.ops);
+  },
+  "proposal-skip": (el) => {
+    p.chat.find((x) => x.id === el.dataset.id).state = "skipped";
+    save();
+    render();
+  },
+  restore: (el) => restore(el.dataset.id),
+  "focus-chat": () => {
+    ui.mobile = "chat";
+    render();
+    document.querySelector("#chat-input")?.focus();
+  },
+  // Preview
+  device: (el) => {
+    ui.device = el.dataset.d;
+    render();
+  },
+  "toggle-select": () => {
+    ui.selecting = !ui.selecting;
+    if (!ui.selecting) ui.sel = "";
+    render();
+  },
+  "clear-sel": () => {
+    ui.sel = "";
+    render();
+  },
+  "app-page": (el) => {
+    ui.page = el.dataset.page;
+    ui.result = null;
+    render();
+  },
+  "app-refresh": () => {
+    ui.q = "";
+    ui.result = null;
+    ui.page = "home";
+    render();
+  },
+  "open-draft": () => window.open(`${location.pathname}?preview=${p.id}`, "_blank", "noopener"),
+  "toggle-console": () => {
+    ui.console = !ui.console;
+    render();
   },
   "sample-question": (el) => {
-    previewQuestion = el.dataset.q;
-    recordPreview(previewQuestion);
+    if (previewId || releaseId) {
+      ui.q = el.dataset.q;
+      const t = releaseId ? findRelease(releaseId) : byId(previewId);
+      ui.result = answer(t, ui.q);
+      ui.showSource = false;
+      return render();
+    }
+    recordPreview(el.dataset.q);
+    render();
+  },
+  citation: () => {
+    ui.showSource = !ui.showSource;
+    render();
+  },
+  fb: (el) => {
+    ui.fb = el.dataset.v;
     render();
   },
   rerun: (el) => {
-    previewQuestion = el.dataset.input;
-    recordPreview(previewQuestion);
+    ui.tab = "preview";
+    ui.page = "home";
+    recordPreview(el.dataset.input);
     render();
-    toast("Re-ran with the current settings.");
+    toast("Ran again with the current version.");
   },
-  citation: () => {
-    showSource = !showSource;
-    render();
+  theme: (el) => quickChange([{ type: "settings", change: { theme: el.dataset.theme } }]),
+  set: (el) => {
+    const v = el.dataset.val;
+    if (p.settings[el.dataset.key] === v) return;
+    quickChange([{ type: "settings", change: { [el.dataset.key]: v } }]);
   },
-  "agent-select": (el) => {
-    agentSel = el.dataset.id;
-    selection = "";
-    render();
+  "remove-page": (el) => {
+    const pg = p.pages.find((x) => x.id === el.dataset.id);
+    if (ui.page === pg.id) ui.page = "home";
+    quickChange([{ type: "removePage", id: pg.id, name: pg.name }]);
   },
-  "add-agent": () =>
-    dialog(
-      "Add an agent",
-      `<p class="muted">Add a second responsibility only when the app needs one. The handoff becomes visible in Runs and the generated prompt.</p><div class="stack">${btn("<strong>Create a new agent</strong><br><small>Name it and give it one job after the main agent</small>", "add-agent-new", "", 'style="text-align:left"')}${btn("<strong>Use an existing Lyzr Studio agent</strong><br><small>Keeps its identity and owner</small>", "add-agent-studio", "", 'style="text-align:left"')}${btn("<strong>Duplicate from this project</strong><br><small>Start from the current agent</small>", "add-agent-dup", "", 'style="text-align:left"')}${btn("<strong>Custom framework agent</strong><br><small>Point at your own entry point</small>", "add-agent-custom", "", 'style="text-align:left"')}</div>`,
-    ),
-  "add-agent-new": () =>
-    dialog(
-      "Create a new agent",
-      `<form id="agent-form"><label for="agent-name">Name</label><input id="agent-name" required placeholder="Summarizer" style="width:100%"><label for="agent-job">Responsibility</label><select id="agent-job">${["Summarize the answer", "Draft a reply", "Escalate to a person", "Translate the answer"].map((x) => `<option>${x}</option>`).join("")}</select><label for="agent-trigger">Runs</label><select id="agent-trigger">${["After the main agent answers", "When no answer is found", "On request"].map((x) => `<option>${x}</option>`).join("")}</select><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Add agent</button></div></form>`,
-      null,
-    ),
-  "add-agent-studio": () =>
-    dialog(
-      "Use an existing Studio agent",
-      `<p class="muted">Agents configured in Lyzr Studio keep their owner and settings. Architect attaches them to an app step.</p><div class="stack">${[
-        ["Policy summarizer", "Summarize the answer", "Owned by Ops"],
-        ["Escalation router", "Escalate to a person", "Owned by Support"],
-      ]
-        .map(
-          ([n, r, o]) =>
-            `<div class="listrow"><div><strong>${n}</strong><p>${r} · ${o}</p></div>${btn("Attach", "attach-studio", "small", `data-name="${n}" data-job="${r}" data-owner="${o}"`)}</div>`,
-        )
-        .join("")}</div><p class="footer-note">Demo catalog. No Studio account is accessed.</p>`,
-    ),
-  "attach-studio": (el) => {
-    addAgent(p, {
-      name: el.dataset.name,
-      responsibility: el.dataset.job,
-      origin: `Lyzr Studio · ${el.dataset.owner}`,
-      status: "Managed in Studio",
-    });
-    save();
-    modal.close();
-    agentSel = p.agents.at(-1).id;
-    render();
-    toast("Agent attached. Its settings stay managed in Studio.");
-  },
-  "add-agent-dup": () => {
-    const a = A();
-    const entry = addAgent(p, {
-      name: `${a.agent.name} (copy)`,
-      responsibility: a.agent.job,
-      origin: "Duplicated from this project",
-    });
-    save();
-    modal.close();
-    agentSel = entry.id;
-    render();
-    toast("Duplicated. Give it a distinct responsibility.");
-  },
-  "add-agent-custom": () =>
-    dialog(
-      "Custom framework agent",
-      `<form id="custom-agent-form"><label for="ca-name">Name</label><input id="ca-name" required placeholder="Ranker" style="width:100%"><label for="ca-framework">Framework</label><input id="ca-framework" required placeholder="For example: Semantic Kernel" style="width:100%"><label for="ca-entry">Entry point exposing run(input) → output</label><input id="ca-entry" required placeholder="agents/ranker.py" style="width:100%"><label for="ca-job">Responsibility</label><input id="ca-job" required placeholder="Rank candidate answers" style="width:100%"><p class="footer-note">Saved as “Not verified” until a test run succeeds. Nothing is executed in this prototype.</p><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Add agent</button></div></form>`,
-      null,
-    ),
-  "remove-agent": (el) => {
-    removeAgent(p, el.dataset.id);
-    save();
-    agentSel = "main";
-    render();
-    toast("Agent removed. Recorded in Changes.");
-  },
+  // Code
   "code-file": (el) => {
-    codeFile = el.dataset.path;
+    ui.codeFile = el.dataset.path;
     render();
   },
   "code-open": (el) => {
-    codeFile = el.dataset.path;
-    nav("code");
-  },
-  "copy-file": async () => {
-    const f = generateFiles(p).find((x) => x.path === codeFile) || generateFiles(p)[0];
-    try {
-      await navigator.clipboard.writeText(f.text);
-      toast(`Copied ${f.path}.`);
-    } catch {
-      toast("Clipboard unavailable here. Select the text to copy it.");
-    }
-  },
-  "download-zip": () => {
-    downloadBlob(new Blob([zipBytes(generateFiles(p))], { type: "application/zip" }), `${slug(p.name)}-source.zip`);
-    toast("Downloaded the generated source as a ZIP.");
-  },
-  "copy-link": async (el) => {
-    try {
-      await navigator.clipboard.writeText(el.dataset.link);
-      toast("Copied the working link. It opens the released app in this browser.");
-    } catch {
-      toast(el.dataset.link);
-    }
-  },
-  "copy-sim": async (el) => {
-    try {
-      await navigator.clipboard.writeText(el.dataset.link);
-      toast("Copied the simulated production address. It does not resolve anywhere.");
-    } catch {
-      toast(el.dataset.link);
-    }
-  },
-  access: () =>
-    dialog(
-      "Who should use this app?",
-      `<form id="access-form"><label for="audience">App audience</label><select id="audience"><option value="team" ${p.settings.audience === "team" ? "selected" : ""}>Invited teammates · sign-in required</option><option value="public" ${p.settings.audience === "public" ? "selected" : ""}>Anyone with the link</option></select><p class="footer-note">The recipient demo will show the selected entry flow. This is not real access control.</p><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Save audience</button></div></form>`,
-      null,
-    ),
-  appearance: () =>
-    dialog(
-      "Make the app feel like yours",
-      `<p>Architect keeps its own interface. Your app can have a different visual identity.</p><div class="row">${btn("Forest", "theme", "", `data-theme="forest"`)}${btn("Ocean", "theme", "", `data-theme="ocean"`)}</div>`,
-    ),
-  theme: (el) => {
-    settingsChange(p, { theme: el.dataset.theme }, "Changed app appearance");
-    save();
-    modal.close();
+    ui.codeFile = el.dataset.path;
+    ui.tab = "code";
+    ui.mobile = "app";
+    closeModal();
+    setHash();
     render();
   },
-  "connect-source": (el) => {
-    const source = el.dataset.source;
-    dialog(
-      `Set up ${esc(source)}`,
-      `<p>Choose which content the agent can read. A real connection would request access before reading anything.</p><label for="source-scope">Example folder, table or collection</label><input id="source-scope" placeholder="Company handbook"><p class="footer-note">Demo setup only. No account is connected or content retrieved.</p>`,
-      btn("Save demo setup", "save-connection", "primary", `data-source="${source}"`),
-    );
+  "copy-file": () => {
+    const f = generateFiles(p).find((x) => x.path === ui.codeFile);
+    if (f) copy(f.text, `Copied ${f.path}.`);
   },
+  "copy-cmd": (el) => copy(el.dataset.cmd, "Copied to the clipboard."),
+  "download-zip": () => {
+    ui.pop = null;
+    downloadBlob(new Blob([zipBytes(generateFiles(p))], { type: "application/zip" }), `${slug(p.name)}-source.zip`);
+    toast("Downloaded the source. Run npm run dev inside it.");
+    render();
+  },
+  export: () => {
+    ui.pop = null;
+    downloadBlob(new Blob([JSON.stringify(p, null, 2)], { type: "application/json" }), slug(p.name) + ".json");
+    render();
+  },
+  // Agents
+  "agent-select": (el) => {
+    ui.agentSel = el.dataset.id;
+    render();
+  },
+  "agent-tab": (el) => {
+    ui.agentTab = el.dataset.k;
+    render();
+  },
+  framework: (el) => {
+    if (p.settings.framework === el.dataset.fw) return;
+    quickChange([{ type: "framework", change: { framework: el.dataset.fw } }]);
+  },
+  "test-chip": (el) => {
+    ui.testInput = el.dataset.q;
+    const r = answer(p, ui.testInput);
+    ui.testResult = { ...r, steps: recordRun(p, ui.testInput, r).steps };
+    save();
+    render();
+  },
+  "add-agent": () =>
+    dialog("Add an agent", "Give the app a second job only when it needs one. Handoffs show in every run.", `<div class="stack">${btn(`${icon("plus", 18)}<span class="grow"><b>Create a new agent</b><small>Name it and give it one job</small></span>`, "add-agent-new", "choice")}${btn(`${icon("bot", 18)}<span class="grow"><b>Use one from Lyzr Studio</b><small>Keeps its owner and settings</small></span>`, "add-agent-studio", "choice")}${btn(`${icon("code", 18)}<span class="grow"><b>Bring your own code</b><small>Point at an entry point in any framework</small></span>`, "add-agent-custom", "choice")}</div>`),
+  "add-agent-new": () =>
+    dialog("Create an agent", "", `<form id="agent-form" class="stack"><div class="field"><label class="field-label" for="agent-name">Name</label><input id="agent-name" required placeholder="Summarizer"></div><div class="field"><label class="field-label" for="agent-job">Job</label><select id="agent-job">${["Summarize the answer", "Draft a reply", "Escalate to a person", "Translate the answer"].map((x) => `<option>${x}</option>`).join("")}</select></div><div class="field"><label class="field-label" for="agent-trigger">Runs</label><select id="agent-trigger">${["After the main agent answers", "When no answer is found", "On request"].map((x) => `<option>${x}</option>`).join("")}</select></div><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">Add agent</button></div></form>`),
+  "add-agent-studio": () =>
+    dialog("Use a Studio agent", "", `<div class="stack">${STUDIO_AGENTS.map(([n, r, o]) => btn(`${icon("bot", 18)}<span class="grow"><b>${n}</b><small>${r} · owned by ${o}</small></span>`, "attach-studio", "choice", `data-name="${n}" data-job="${r}" data-owner="${o}"`)).join("")}</div>`),
+  "attach-studio": (el) => {
+    const e = addAgent(p, { name: el.dataset.name, responsibility: el.dataset.job, origin: `Lyzr Studio · ${el.dataset.owner}`, status: "Managed in Studio" });
+    checkpoint(p, `Added ${e.name}`);
+    autoCommit(p, `Added ${e.name}`);
+    save();
+    closeModal();
+    ui.agentSel = e.id;
+    render();
+    toast(`${e.name} attached.`);
+  },
+  "add-agent-custom": () =>
+    dialog("Bring your own agent", "Architect calls run(input) and shows the handoff in every run.", `<form id="custom-agent-form" class="stack"><div class="field"><label class="field-label" for="ca-name">Name</label><input id="ca-name" required placeholder="Ranker"></div><div class="field"><label class="field-label" for="ca-framework">Framework</label><input id="ca-framework" required placeholder="Semantic Kernel"></div><div class="field"><label class="field-label" for="ca-entry">Entry point</label><input id="ca-entry" required placeholder="agents/ranker.py"></div><div class="field"><label class="field-label" for="ca-job">Job</label><input id="ca-job" required placeholder="Rank candidate answers"></div><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">Add agent</button></div></form>`),
+  "remove-agent": (el) => {
+    const name = p.agents.find((x) => x.id === el.dataset.id)?.name;
+    removeAgent(p, el.dataset.id);
+    checkpoint(p, `Removed ${name}`);
+    autoCommit(p, `Removed ${name}`);
+    save();
+    ui.agentSel = "main";
+    render();
+    toast(`${name} removed.`);
+  },
+  // Data
+  "connect-source": (el) =>
+    dialog(`Connect ${esc(el.dataset.source)}`, "Choose what the agent can read. Access is requested before anything is read.", `<div class="field"><label class="field-label" for="source-scope">Folder, table or collection</label><input id="source-scope" placeholder="Company handbook"></div>`, btn("Cancel", "close") + btn("Connect", "save-connection", "btn primary", `data-source="${esc(el.dataset.source)}"`)),
   "save-connection": (el) => {
     p.connections = [...new Set([...(p.connections || []), el.dataset.source])];
     save();
-    modal.close();
+    closeModal();
     render();
-    toast("Demo setup saved. Live connection remains unavailable.");
+    toast(`${el.dataset.source} set up.`);
   },
-  github: () =>
-    dialog(
-      "Connect your project to GitHub",
-      `<p>Choose where this project belongs. This is a simulated connection; no repository will be created.</p><form id="github-form"><label for="repo-name">Repository</label><input id="repo-name" required pattern="[\\w.\\-]+/[\\w.\\-]+" value="${esc(p.git.repo || "demo/" + slug(p.name))}" placeholder="owner/repository"><label for="branch">Working branch</label><input id="branch" required value="${esc(p.git.branch)}"><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Connect demo repository</button></div></form>`,
-      null,
-    ),
+  // Top bar
+  settings: () => {
+    ui.pop = null;
+    render();
+    settingsDialog();
+  },
+  archive: () => {
+    ui.pop = null;
+    dialog("Archive this project?", `${esc(p.name)} leaves Home. Its releases keep working.`, "", btn("Keep it", "close") + btn("Archive", "archive-confirm", "btn danger"));
+  },
+  "archive-confirm": () => {
+    p.archived = true;
+    save();
+    goHome();
+    toast("Project archived.");
+  },
+  "commit-push": () => {
+    p.git.committedRevision = p.revision;
+    p.git.syncedRevision = p.revision;
+    p.git.lastMessage = p.versions.at(-1).label;
+    p.git.lastCommit = uid().slice(0, 7);
+    save();
+    render();
+    toast(`Pushed to ${p.git.branch}.`);
+  },
+  "open-pr": () => toast(`Opened a pull request from ${p.git.branch} (demo).`),
   branch: () =>
-    dialog(
-      "Work in a branch",
-      `<form id="branch-form"><label for="new-branch">Branch name</label><input id="new-branch" required value="${esc(p.git.branch)}"><p class="footer-note">Updates this demo’s working-branch label. No remote branch is created.</p><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Use branch</button></div></form>`,
-      null,
-    ),
-  check: () => {
-    p.check = {
-      revision: p.revision,
-      result: p.source.trim()
-        ? "Source text and behavior settings present"
-        : "Source text missing",
-    };
+    dialog("Work on a branch", "New versions are committed to this branch.", `<form id="branch-form" class="stack"><label class="sr" for="new-branch">Branch</label><input id="new-branch" required value="${esc(p.git.branch)}"><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">Use branch</button></div></form>`),
+  "git-disconnect": () => {
+    p.git.connected = false;
     save();
     render();
+    toast("Disconnected from GitHub. The repository stays as it is.");
   },
-  commit: () =>
-    dialog(
-      "Commit reviewed changes",
-      `<p>Save a demo checkpoint for draft v${p.revision}. Review the changes before committing.</p><form id="commit-form"><label for="commit-message">Commit message</label><input id="commit-message" required value="Update ${esc(A().steps[1].toLowerCase())} behavior" style="width:100%"><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Commit locally in demo</button></div></form>`,
-      null,
-    ),
-  sync: () => {
-    p.git.syncedRevision = p.git.committedRevision;
-    save();
-    render();
-    toast("Demo sync complete. No data was pushed to GitHub.");
-  },
-  publish: () => {
-    if (p.stage !== "built")
-      return dialog(
-        "Try your app before publishing",
-        `<p>Build the configured example first, then try an input it handles and one it cannot.</p>`,
-        btn("Review plan", "publish-plan", "primary"),
-      );
-    const latest = p.releases.at(-1);
-    const since = latest ? p.changes.filter((c) => c.revision > latest.revision) : [];
-    dialog(
-      latest ? "Publish an update" : "Publish a version people can use",
-      `<h3>${esc(p.name)} · draft v${p.revision}</h3><div class="listrow"><strong>Environment</strong><span>Production · <code>${esc(appUrl())}</code></span></div><div class="listrow"><strong>Audience</strong><span>${p.settings.audience === "team" ? "Team sign-in" : "Anyone with the link"}</span></div><div class="listrow"><strong>Behavior</strong><span>${esc(summary(p.settings))}</span></div><div class="listrow"><strong>Knowledge</strong><span>${esc(p.sourceName)}</span></div>${latest ? `<div class="listrow"><strong>Since release ${latest.number}</strong><span>${since.length ? since.map((c) => esc(c.reason)).join(" · ") : "No recorded changes"}</span></div>` : ""}<div class="callout">Creates a saved release with a working recipient view in this browser. The production address is simulated; no external deployment occurs.</div><p class="footer-note">${p.sourceKind === "sample" ? "This release includes synthetic example content. " : ""}Framework: ${esc(p.settings.framework)} · ${esc(frameworkSetup(p).status)}.</p>`,
-      btn("Keep editing", "close") + btn(latest ? "Publish update" : "Publish", "release", "primary"),
-    );
-  },
-  "publish-plan": () => {
-    modal.close();
-    nav("plan");
-  },
-  release: () => {
-    modal.close();
-    startPublish();
-  },
+  "copy-preview": () => copy(`${location.origin}${location.pathname}?preview=${p.id}`, "Preview link copied."),
+  "copy-link": (el) => copy(el.dataset.link, "Link copied."),
+  qr: () => dialog("Scan to open", "", `<div style="display:flex;justify-content:center;padding:10px">${qrArt()}</div><p class="hint" style="text-align:center">${esc(slug(p.name))}.architect.app</p>`),
+  release: () => startPublish(),
+  domain: () =>
+    dialog("Add a custom domain", "Point your domain at Architect and we handle the certificate.", `<form id="domain-form" class="stack"><label class="sr" for="domain">Domain</label><input id="domain" placeholder="help.yourcompany.com" pattern="[a-z0-9.\\-]+\\.[a-z]{2,}" required><p class="hint">Then add a CNAME record pointing to <code>apps.architect.app</code>.</p><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">Add domain</button></div></form>`),
   rollback: (el) => {
     const r = p.releases.find((x) => x.id === el.dataset.id);
-    if (!r) return;
-    dialog(
-      `Roll back to release ${r.number}?`,
-      `<p>Your draft becomes a copy of release ${r.number} (${esc(describe(r))}) and a new release is published from it. Release ${p.releases.at(-1).number} stays in history.</p>`,
-      btn("Cancel", "close") + btn("Roll back and publish", "rollback-confirm", "primary", `data-id="${r.id}"`),
-    );
+    dialog(`Roll back to release ${r.number}?`, `Visitors get release ${r.number} again, published as a new release. Nothing is deleted.`, "", btn("Cancel", "close") + btn("Roll back", "rollback-confirm", "btn primary", `data-id="${r.id}"`));
   },
   "rollback-confirm": (el) => {
     const r = p.releases.find((x) => x.id === el.dataset.id);
     const n = rollback(p, r);
+    checkpoint(p, `Rolled back to release ${r.number}`);
     save();
-    modal.close();
-    previewResult = null;
+    closeModal();
+    ui.result = null;
+    ui.pubStep = "live";
     render();
-    toast(`Rolled back. Release ${n.number} now serves the configuration of release ${r.number}.`);
+    toast(`Release ${n.number} now serves what release ${r.number} did.`);
   },
   "deploy-log": (el) => {
     const r = p.releases.find((x) => x.id === el.dataset.id);
     const t = new Date(r.at);
     const line = (s, msg) => `${new Date(t.getTime() + s * 1000).toLocaleTimeString()}  ${msg}`;
-    dialog(
-      `Deploy log · release ${r.number}`,
-      `<pre class="codeblock">${esc([line(0, `Snapshot v${r.revision} frozen (${r.sourceName})`), line(1, `Access: ${r.settings.audience === "team" ? "team sign-in" : "anyone with the link"}`), line(2, `Agents: ${[A(r).agent.name, ...(r.agents || []).map((x) => x.name)].join(", ")} on ${r.settings.framework}`), line(3, `Tools: ${(r.tools || ["read_source"]).join(", ") || "none"} · assets prepared (simulated)`), line(4, `Release ${r.number} live at ${appUrl(r)} (simulated)`)].join("\n"))}</pre><p class="footer-note">Illustrative log. No external deployment ran.</p>`,
-    );
-  },
-  "verify-domain": () => {
-    p.domain.status = "verified";
-    save();
-    render();
-    toast("Domain marked verified (demo). No DNS was checked.");
-  },
-  "remove-domain": () => {
-    p.domain = null;
-    save();
-    render();
-  },
-  "add-env": () =>
-    dialog(
-      "Add an environment variable",
-      `<form id="env-form"><label for="env-name">Name</label><input id="env-name" required placeholder="OPENAI_API_KEY" style="width:100%"><p class="footer-note">Only the name is stored. Do not paste real keys into this demo.</p><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Add</button></div></form>`,
-      null,
-    ),
-  invite: () =>
-    dialog(
-      "Invite a member",
-      `<form id="invite-form"><label for="invite-email">Email</label><input id="invite-email" type="email" required placeholder="teammate@company.com" style="width:100%"><label for="invite-role">Role</label><select id="invite-role"><option>Editor</option><option>Reviewer</option><option>App user</option></select><p class="footer-note">Demo invite. No email is sent. Reviewer access is read-only; App user only gets the released app.</p><div class="actions">${btn("Cancel", "close", "quiet")}<button class="primary">Send invite</button></div></form>`,
-      null,
-    ),
-  archive: () =>
-    dialog(
-      "Archive this project?",
-      `<p>${esc(p.name)} disappears from Home. Its releases stay available in this browser, and you can restore it from an export.</p>`,
-      btn("Keep it", "close") + btn("Archive", "archive-confirm", "danger"),
-    ),
-  "archive-confirm": () => {
-    p.archived = true;
-    save();
-    modal.close();
-    act.home();
-    toast("Project archived.");
+    dialog(`Release ${r.number}`, `Published ${ago(r.at)}`, `<pre class="pre">${esc([line(0, `Froze version at revision ${r.revision} (${r.sourceName})`), line(1, `Access: ${r.settings.audience === "team" ? r.settings.signin || "sign-in required" : "anyone with the link"}`), line(2, `Agents: ${[A(r).agent.name, ...(r.agents || []).map((x) => x.name)].join(", ")} on ${r.settings.framework}`), line(3, `Checks: ${runChecks(r).passed} of ${runChecks(r).total} sample questions`), line(4, `Live at ${slug(r.name)}.architect.app`)].join("\n"))}</pre>`);
   },
   "recipient-login": () => {
     sessionStorage.setItem("recipient-" + releaseId, "yes");
     render();
   },
-  export: () => {
-    downloadBlob(new Blob([JSON.stringify(p, null, 2)], { type: "application/json" }), slug(p.name) + ".json");
-    toast("Downloaded your saved project configuration.");
-  },
 };
-document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-action]");
-  if (el && !el.disabled) {
-    e.preventDefault();
-    act[el.dataset.action]?.(el);
-  }
-});
-document.addEventListener("submit", (e) => {
-  const f = e.target;
-  if (!(f instanceof HTMLFormElement)) return;
-  e.preventDefault();
-  const val = (id) => document.querySelector(id)?.value.trim() ?? "";
-  if (f.id === "email-form") {
-    auth.email = val("#email");
-    auth.step = "sent";
-    render();
-    return;
-  }
-  if (f.id === "code-form") return finishSignIn("Email", auth.email);
-  if (f.id === "shape-form") {
-    const name = val("#shape-name");
-    if (!name) return toast("Give your app a name.");
-    create(false, {
-      archetype: shape.archetype,
-      name,
-      audience: document.querySelector("#shape-audience").value,
-    });
-    return;
-  }
-  if (f.id === "chat-form") {
-    const text = val("#chat-input");
-    if (!text) return;
-    const { change, rename } = chatIntent(text);
-    p.chat.push({
-      role: "user",
-      text: (selection ? "[" + stepTitle(selection) + "] " : "") + text,
-    });
-    p.unsent = "";
-    if (rename) {
-      const old = p.name;
-      p.name = rename;
-      p.revision++;
-      p.changes.push({ revision: p.revision, reason: "Renamed app to " + rename, at: new Date().toISOString() });
-      p.chat.push({ role: "assistant", text: `Renamed ${old} to ${rename}. Existing releases keep their name.` });
+function qrArt() {
+  let cells = "";
+  let seed = [...(p?.id || "x")].reduce((s, c) => s + c.charCodeAt(0), 7);
+  for (let y = 0; y < 21; y++)
+    for (let x = 0; x < 21; x++) {
+      const finder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
+      seed = (seed * 9301 + 49297) % 233280;
+      const on = finder ? (x % 14 === 0 || x % 14 === 6 || y % 14 === 0 || y % 14 === 6 || (x % 14 > 1 && x % 14 < 5 && y % 14 > 1 && y % 14 < 5)) : seed / 233280 > 0.52;
+      if (on) cells += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
     }
-    if (change) {
-      const next = { ...p.settings, ...change };
-      if (JSON.stringify(next) === JSON.stringify(p.settings))
-        p.chat.push({ role: "assistant", text: "That already matches the current setup: " + summary(p.settings) + "." });
-      else {
-        p.chat.push({ role: "assistant", text: "Here’s what I’d change: " + summary(next) + ". Review it before it applies." });
-        save();
-        render();
-        propose(change);
-        return;
-      }
-    } else if (!rename)
-      p.chat.push({
-        role: "assistant",
-        text: `Saved as a request. In this prototype I can change ${A().settings.length.label.toLowerCase()}, what happens when there’s no answer, whether evidence is shown, the app name, appearance and audience. Try “shorter answers and show sources”.`,
-      });
-    save();
-    render();
-  }
-  if (f.id === "behavior-form")
-    propose({
-      length: document.querySelector("#length").value,
-      unknown: document.querySelector("#unknown").value,
-      citations: document.querySelector("#citations").checked,
-    });
-  if (f.id === "name-form") {
-    const name = val("#project-name");
-    if (!name) return;
-    p.name = name;
-    p.revision++;
-    p.changes.push({ revision: p.revision, reason: "Renamed app to " + name, at: new Date().toISOString() });
-    save();
-    render();
-    toast("App name updated. Existing releases keep their name.");
-  }
-  if (f.id === "question-form") {
-    previewQuestion = val("#question");
-    recordPreview(previewQuestion);
-    render();
-  }
-  if (f.id === "test-form") {
-    testInput = val("#test-input");
-    if (!testInput) return;
-    const r = answer(p, testInput);
-    const run = recordRun(p, testInput, r);
-    testResult = { ...r, steps: run.steps };
-    save();
-    render();
-  }
-  if (f.id === "tools-form") {
-    const tools = [...f.querySelectorAll("input[name=tool]:checked")].map((x) => x.value);
-    if (setTools(p, tools)) {
-      save();
+  return `<svg width="180" height="180" viewBox="-1 -1 23 23" fill="#1F2420" role="img" aria-label="QR code">${cells}</svg>`;
+}
+function settingsDialog() {
+  const s = p.settings;
+  const me = { email: db.account?.email || "aman@demo.architect", role: "Owner" };
+  const members = [me, ...(p.members || []).filter((m) => m.role !== "Owner")];
+  dialog(
+    "Project settings",
+    esc(p.name),
+    `<div class="card"><h3>General</h3><form id="rename-form" class="field" style="margin-top:12px"><label class="field-label" for="rename">Name</label><div class="row"><input id="rename" value="${esc(p.name)}" maxlength="50"><button class="btn sm" type="submit">Save</button></div></form><div class="toggle-row"><span>Who can open it</span><div class="seg sm">${[["public", "Anyone with the link"], ["team", "Signed-in people"]].map(([v, l]) => `<button type="button" data-action="set" data-key="audience" data-val="${v}" class="${s.audience === v ? "on" : ""}">${l}</button>`).join("")}</div></div><div class="toggle-row"><span>Look</span><div class="row">${Object.entries(THEMES).map(([k, th]) => `<button type="button" class="swatch ${s.theme === k ? "on" : ""}" data-action="theme" data-theme="${k}" aria-label="${th.label} theme" title="${th.label}" style="--sw:${th.accent};--sw-bg:${th.bg}"></button>`).join("")}</div></div><div class="toggle-row"><span>Starting point<small>${esc(A().label)}</small></span>${btn("Change", "switch-start", "btn sm")}</div></div>
+<div class="card"><div class="row between"><h3>Environment variables</h3>${btn(`${icon("plus", 13)}Add`, "add-env", "btn sm")}</div><p class="hint" style="margin:6px 0">Names only in this prototype. Don’t paste real keys.</p>${envVars(p).map((v) => `<div class="toggle-row"><code>${esc(v.name)}</code><span class="status ${v.status === "Not set" ? "" : "live"}"><span class="dot ${v.status === "Not set" ? "amber" : "live"}"></span>${esc(v.status)}</span></div>`).join("")}</div>
+<div class="card"><div class="row between"><h3>People</h3>${btn("Invite", "pop", "btn sm", 'data-pop="share"')}</div>${members.map((m) => `<div class="toggle-row"><span>${esc(m.email)}${m.status ? `<small>${esc(m.status)}</small>` : ""}</span><span class="small muted">${esc(m.role)}</span></div>`).join("")}</div>
+<div class="card"><h3>Export</h3><div class="row wrap" style="margin-top:10px">${btn(`${icon("download", 13)}Source (.zip)`, "download-zip", "btn sm")}${btn(`${icon("file", 13)}Project (.json)`, "export", "btn sm")}</div></div>
+<div class="card"><div class="row between"><div><h3>Archive</h3><p class="hint">Hides it from Home. Releases keep working.</p></div>${btn("Archive", "archive", "btn danger sm")}</div></div>`,
+    "",
+    { wide: true, kind: "settings" },
+  );
+}
+act["add-env"] = () =>
+  dialog("Add an environment variable", "", `<form id="env-form" class="stack"><label class="sr" for="env-name">Name</label><input id="env-name" required placeholder="OPENAI_API_KEY"><p class="hint">Only the name is saved in this prototype.</p><div class="dlg-actions">${btn("Cancel", "settings")}<button class="btn primary" type="submit">Add</button></div></form>`);
+
+// ---------- Events ----------
+document.addEventListener("click", (e) => {
+  // Select to edit: clicks inside the app pick an element instead of using it
+  if (ui.selecting && p && !releaseId && !previewId) {
+    const inApp = e.target.closest("#viewport .appview");
+    if (inApp && !e.target.closest(".inspector")) {
+      e.preventDefault();
+      const el = e.target.closest("[data-el]");
+      ui.sel = el ? el.dataset.el : "";
+      ui.pop = null;
       render();
-      toast("Tools updated. Recorded in Changes and the generated agent file.");
-    } else toast("Tools already match.");
+      return;
+    }
   }
-  if (f.id === "agent-form") {
-    const entry = addAgent(p, {
-      name: val("#agent-name"),
-      responsibility: document.querySelector("#agent-job").value,
-      trigger: document.querySelector("#agent-trigger").value,
-    });
-    save();
-    modal.close();
-    agentSel = entry.id;
-    render();
-    toast("Agent added. The handoff is now visible in Runs.");
+  const t = e.target.closest("[data-action]");
+  if (ui.pop && !e.target.closest(".pop") && !(t && ["pop", "pop-account"].includes(t.dataset.action))) {
+    ui.pop = null;
+    if (!t) return render();
   }
-  if (f.id === "custom-agent-form") {
-    const entry = addAgent(p, {
-      name: val("#ca-name"),
-      responsibility: val("#ca-job"),
-      origin: `Custom · ${val("#ca-framework")}`,
-      entry: val("#ca-entry"),
-      status: "Not verified",
-    });
-    save();
-    modal.close();
-    agentSel = entry.id;
-    render();
+  if (ui.mention && !e.target.closest(".mention") && !(t && t.dataset.action === "mention")) {
+    ui.mention = false;
+    if (!t) return render();
   }
-  if (f.id === "env-form") {
-    const name = addEnv(p, val("#env-name"));
-    if (!name) return toast("Use a new, valid variable name.");
-    save();
-    modal.close();
-    render();
-    toast(`${name} added (name only).`);
-  }
-  if (f.id === "invite-form") {
-    p.members ||= [{ name: db.account?.name || "Aman", email: db.account?.email || "aman@demo.architect", role: "Owner" }];
-    p.members.push({ email: val("#invite-email"), role: document.querySelector("#invite-role").value, status: "Invited (demo)" });
-    save();
-    modal.close();
-    render();
-    toast("Invite recorded. No email is sent in this demo.");
-  }
-  if (f.id === "domain-form") {
-    p.domain = { name: val("#domain").toLowerCase(), status: "pending" };
-    save();
-    render();
-    toast("Domain added. Follow the CNAME instructions, then verify.");
-  }
-  if (f.id === "access-form") {
-    settingsChange(p, { audience: document.querySelector("#audience").value }, "Updated app audience");
-    save();
-    modal.close();
-    render();
-  }
-  if (f.id === "framework-form") {
-    settingsChange(
-      p,
-      {
-        framework: document.querySelector("#framework").value,
-        model: document.querySelector("#model").value,
-        customFramework: val("#custom-framework"),
-      },
-      "Updated agent setup",
-    );
-    save();
-    render();
-    toast("Setup saved. Generated agent file and variables updated.");
-  }
-  if (f.id === "source-form") {
-    const text = val("#source-text"),
-      name = val("#source-name");
-    if (!text || !name) return toast("Add a source name and content.");
-    recordSource(p, text, name);
-    save();
-    render();
-    toast("Local source saved. Future answers use this content.");
-  }
-  if (f.id === "github-form") {
-    p.git.connected = true;
-    p.git.repo = val("#repo-name");
-    p.git.branch = val("#branch");
-    save();
-    modal.close();
-    render();
-  }
-  if (f.id === "branch-form") {
-    p.git.branch = val("#new-branch");
-    save();
-    modal.close();
-    render();
-  }
-  if (f.id === "commit-form") {
-    p.git.committedRevision = p.revision;
-    p.git.lastMessage = val("#commit-message");
-    save();
-    modal.close();
-    render();
-    toast("Demo commit saved. Sync is a separate action.");
+  if (t && !t.disabled) {
+    if (t.tagName !== "INPUT") e.preventDefault();
+    act[t.dataset.action]?.(t, e);
   }
 });
-document.addEventListener("change", (e) => {
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (modal.open) return;
+    if (ui.pop || ui.mention || ui.sel) {
+      ui.pop = null;
+      ui.mention = false;
+      ui.sel = "";
+      render();
+    } else if (ui.selecting) {
+      ui.selecting = false;
+      render();
+    }
+  }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && ["chat-input", "brief"].includes(e.target.id)) {
+    e.preventDefault();
+    e.target.form?.requestSubmit();
+  }
+});
+const onChange = {
+  setting: (el) => quickChange([{ type: "settings", change: { [el.dataset.key]: el.checked } }]),
+  tool: (el) => {
+    const tools = new Set(p.tools || ["read_source"]);
+    el.checked ? tools.add(el.dataset.id) : tools.delete(el.dataset.id);
+    quickChange([{ type: "tools", tools: [...tools] }], `${el.checked ? "Allowed" : "Turned off"}: ${TOOLS.find((x) => x[0] === el.dataset.id)[1].toLowerCase()}`);
+  },
+  model: (el) => quickChange([{ type: "framework", change: { model: el.value } }]),
+  "git-auto": (el) => {
+    p.git.auto = el.checked;
+    if (el.checked) autoCommit(p, p.versions.at(-1).label);
+    save();
+    render();
+  },
+  "builder-model": (el) => (ui.model = el.value),
+  noop: () => {},
+};
+document.addEventListener("change", async (e) => {
+  const t = e.target.closest("[data-change]");
+  if (t) return onChange[t.dataset.change]?.(t, e);
   if (e.target.id === "zip-file") {
     const file = e.target.files[0];
     if (!file) return;
@@ -1444,52 +1757,263 @@ document.addEventListener("change", (e) => {
     importFlow.repo = "northstar/support-app";
     runImportScan();
   }
-  if (e.target.id === "import-branch" && importFlow) importFlow.branch = e.target.value;
+  if (e.target.id === "attach-file") {
+    const file = e.target.files[0];
+    if (!file) return;
+    const isText = /\.(txt|md|csv)$/i.test(file.name);
+    if (isText && file.size > 100000) return toast("Use a text file under 100 KB.");
+    const text = isText ? await file.text() : "";
+    if (ui.view === "workspace" && p) {
+      closeModal();
+      if (text) {
+        recordSource(p, text.trim(), file.name.replace(/\.[^.]+$/, ""));
+        checkpoint(p, `Loaded ${file.name}`);
+        p.chat.push({ role: "user", text: `Attached ${file.name}` }, { role: "assistant", kind: "text", text: `${A().agent.name} now answers from ${file.name}. Check the sample questions in Data.`, action: { label: "Open Data", do: "tab-arg", arg: "data" } });
+      } else p.chat.push({ role: "user", text: `Attached ${file.name}` }, { role: "assistant", kind: "text", text: `Kept ${file.name} as a reference for this project. Tell me what to take from it.` });
+      save();
+      return render();
+    }
+    ui.attachments.push({ name: file.name, kind: "file", text });
+    closeModal();
+    render();
+  }
+  if (e.target.id === "source-file") {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 100000) return toast("Use a text file under 100 KB.");
+    document.querySelector("#source-text").value = await file.text();
+    document.querySelector("#source-name").value = file.name.replace(/\.[^.]+$/, "");
+    toast("Loaded. Review it, then save.");
+  }
+});
+document.addEventListener("submit", (e) => {
+  const f = e.target;
+  if (!(f instanceof HTMLFormElement)) return;
+  e.preventDefault();
+  const val = (id) => document.querySelector(id)?.value.trim() ?? "";
+  if (f.id === "home-form") {
+    brief = val("#brief");
+    sessionStorage.setItem("architect-draft-brief", brief);
+    if (!brief) {
+      document.querySelector("#brief")?.focus();
+      return toast("Describe what you want to build first.");
+    }
+    if (!requireAccount({ type: "build", brief })) return;
+    return startProject(brief);
+  }
+  if (f.id === "email-form") {
+    auth.email = val("#email");
+    auth.step = "sent";
+    return signinDialog();
+  }
+  if (f.id === "code-form") return finishSignIn("Email", auth.email);
+  if (f.id === "link-form") {
+    const url = val("#attach-link");
+    let host = url;
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {}
+    if (ui.view === "workspace" && p) {
+      closeModal();
+      (p.references ||= []).push({ name: host, kind: "link" });
+      p.chat.push({ role: "user", text: `Reference: ${url}` }, { role: "assistant", kind: "text", text: `Added ${host} as a reference. Tell me what to take from it: the layout, the colours or the copy.` });
+      save();
+      return render();
+    }
+    ui.attachments.push({ name: host, kind: "link" });
+    closeModal();
+    return render();
+  }
+  if (f.id === "chat-form") {
+    const text = val("#chat-input");
+    if (!text || build) return;
+    return sendMessage(text);
+  }
+  if (f.id === "question-form") {
+    const q = val("#question");
+    if (!q) return;
+    if (releaseId || previewId) {
+      const t = releaseId ? findRelease(releaseId) : byId(previewId);
+      ui.q = q;
+      ui.result = answer(t, q);
+      return render();
+    }
+    recordPreview(q);
+    return render();
+  }
+  if (f.id === "app-contact") return toast("Message sent.");
+  if (f.id === "ins-name" || f.id === "rename-form") {
+    const name = val(f.id === "ins-name" ? "#ins-name-input" : "#rename");
+    if (!name || name === p.name) return;
+    ui.pop = null;
+    closeModal();
+    return quickChange([{ type: "rename", name }]);
+  }
+  if (f.id === "ins-hero") {
+    const ops = [];
+    if (val("#ins-h2") && val("#ins-h2") !== p.copy.h2) ops.push({ type: "copy", field: "h2", value: val("#ins-h2") });
+    if (val("#ins-intro") && val("#ins-intro") !== p.copy.intro) ops.push({ type: "copy", field: "intro", value: val("#ins-intro") });
+    return ops.length && quickChange(ops, "Updated the text");
+  }
+  if (f.id === "ins-form") {
+    const ops = [];
+    if (val("#ins-ph") && val("#ins-ph") !== p.copy.placeholder) ops.push({ type: "copy", field: "placeholder", value: val("#ins-ph") });
+    if (val("#ins-btn") && val("#ins-btn") !== p.copy.button) ops.push({ type: "copy", field: "button", value: val("#ins-btn") });
+    return ops.length && quickChange(ops, "Updated the form");
+  }
+  if (f.id === "ins-page") {
+    const name = val("#ins-page-name");
+    if (!name) return;
+    const page = { id: slug(name) + "-" + uid().slice(0, 4), name: cap(name), kind: pageKind(name) };
+    ui.page = page.id;
+    return quickChange([{ type: "page", page }]);
+  }
+  if (f.id === "instructions-form") {
+    const v = val("#instructions");
+    if (!v || v === p.instructions) return toast("No changes to save.");
+    return quickChange([{ type: "instructionsSet", value: v }], "Instructions saved");
+  }
+  if (f.id === "custom-entry") return quickChange([{ type: "framework", change: { customFramework: val("#entry") } }], "Entry point saved");
+  if (f.id === "test-form") {
+    ui.testInput = val("#test-input");
+    if (!ui.testInput) return;
+    const r = answer(p, ui.testInput);
+    ui.testResult = { ...r, steps: recordRun(p, ui.testInput, r).steps };
+    save();
+    return render();
+  }
+  if (f.id === "source-form") {
+    const text = val("#source-text"),
+      name = val("#source-name");
+    if (!text || !name) return toast("Add a name and some content.");
+    recordSource(p, text, name);
+    const v = checkpoint(p, `Updated ${name}`);
+    autoCommit(p, v.label);
+    ui.result = null;
+    save();
+    render();
+    return toast(`Saved. ${A().agent.name} now answers from ${name} · version ${v.n}`);
+  }
+  if (f.id === "git-form") {
+    const repo = val("#git-repo");
+    ui.gitStep = "auth";
+    render();
+    setTimeout(() => {
+      ui.gitStep = null;
+      Object.assign(p.git, { connected: true, repo, branch: p.git.branch || "main", auto: true });
+      autoCommit(p, "Initial commit from Architect");
+      save();
+      render();
+      toast(`Connected. Every version now lands in ${repo}.`);
+    }, 1100);
+    return;
+  }
+  if (f.id === "branch-form") {
+    p.git.branch = val("#new-branch");
+    save();
+    closeModal();
+    return render();
+  }
+  if (f.id === "invite-form") {
+    p.members ||= [];
+    p.members.push({ email: val("#invite-email"), role: document.querySelector("#invite-role").value, status: "Invited" });
+    save();
+    render();
+    return toast("Invite sent.");
+  }
+  if (f.id === "domain-form") {
+    p.customDomain = { name: val("#domain").toLowerCase(), status: "pending" };
+    save();
+    closeModal();
+    render();
+    toast("Domain added. Checking DNS…");
+    setTimeout(() => {
+      if (!p?.customDomain) return;
+      p.customDomain.status = "verified";
+      save();
+      render();
+      toast(`${p.customDomain.name} is verified.`);
+    }, 2200);
+    return;
+  }
+  if (f.id === "env-form") {
+    const name = addEnv(p, val("#env-name"));
+    if (!name) return toast("Use a new variable name.");
+    save();
+    settingsDialog();
+    return toast(`${name} added.`);
+  }
+  if (f.id === "agent-form" || f.id === "custom-agent-form") {
+    const custom = f.id === "custom-agent-form";
+    const e2 = addAgent(p, custom ? { name: val("#ca-name"), responsibility: val("#ca-job"), origin: `Custom · ${val("#ca-framework")}`, entry: val("#ca-entry"), status: "Not verified" } : { name: val("#agent-name"), responsibility: document.querySelector("#agent-job").value, trigger: document.querySelector("#agent-trigger").value });
+    checkpoint(p, `Added ${e2.name}`);
+    autoCommit(p, `Added ${e2.name}`);
+    save();
+    closeModal();
+    ui.agentSel = e2.id;
+    render();
+    return toast(`${e2.name} added.`);
+  }
 });
 function bind() {
   document.querySelector("#brief")?.addEventListener("input", (e) => {
     brief = e.target.value;
     sessionStorage.setItem("architect-draft-brief", brief);
+    grow(e.target);
   });
-  document.querySelector("#shape-name")?.addEventListener("input", (e) => {
-    shape.name = e.target.value;
-    shape.autoNamed = false;
-  });
-  document
-    .querySelector("#shape-audience")
-    ?.addEventListener("change", (e) => (shape.audience = e.target.value));
-  document.querySelector("#chat-input")?.addEventListener("input", (e) => {
+  const ci = document.querySelector("#chat-input");
+  ci?.addEventListener("input", (e) => {
     p.unsent = e.target.value;
-    save();
+    if (e.target.value.endsWith("@") && !ui.mention) {
+      ui.mention = true;
+      render();
+    }
+    grow(e.target);
   });
-  document
-    .querySelector("#source-file")
-    ?.addEventListener("change", async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 100000)
-        return toast("Use a text file smaller than 100 KB.");
-      document.querySelector("#source-text").value = await file.text();
-      document.querySelector("#source-name").value = file.name;
-      toast("Text loaded locally. Review it, then save.");
-    });
+  document.querySelector("#msgs")?.addEventListener("scroll", (e) => {
+    const m = e.target;
+    ui.stick = m.scrollHeight - m.scrollTop - m.clientHeight < 40;
+  });
+  for (const t of document.querySelectorAll("#brief, #chat-input")) grow(t);
 }
+const regrow = () => {
+  for (const t of document.querySelectorAll("#brief, #chat-input")) grow(t);
+  placeInspector();
+};
+window.addEventListener("load", regrow);
+document.fonts?.ready.then(regrow);
+function grow(t) {
+  const max = t.id === "brief" ? 220 : 180;
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight, max) + "px";
+  t.style.overflowY = t.scrollHeight > max ? "auto" : "hidden";
+}
+window.addEventListener("resize", regrow);
+window.addEventListener("beforeunload", () => save());
+
+window.addEventListener("hashchange", () => {
+  const [id, tab] = location.hash.slice(1).split("/");
+  if (!id) return ui.view === "workspace" && goHome();
+  if (!db.signedIn || !byId(id)) return;
+  if (p?.id !== id || ui.view !== "workspace") openProject(id, ["preview", "code", "agents", "data"].includes(tab) ? tab : "preview");
+  else if (tab && tab !== ui.tab && ["preview", "code", "agents", "data"].includes(tab)) {
+    ui.tab = tab;
+    render();
+  }
+});
+
+// ---------- Boot ----------
 const hash = location.hash.slice(1).split("/");
-if (hash[0] && byId(hash[0])) {
+if (hash[0] && byId(hash[0]) && db.signedIn) {
   p = byId(hash[0]);
-  view = [
-    "plan",
-    "app",
-    "agents",
-    "data",
-    "code",
-    "runs",
-    "review",
-    "deploy",
-    "activity",
-    "settings",
-  ].includes(hash[1])
-    ? hash[1]
-    : "plan";
+  resetWorkspaceUi();
+  ui.view = "workspace";
+  ui.tab = ["preview", "code", "agents", "data"].includes(hash[1]) ? hash[1] : "preview";
+  // A build interrupted by a reload finishes as built.
+  for (const m of p.chat)
+    if (m.kind === "build" && !m.done && !m.cancelled && m.paused == null) {
+      if (m.first) (m.done = true), (p.stage = "built");
+      else (m.cancelled = true), (m.stoppedAt = 0), delete m.ops;
+    }
 }
 render();

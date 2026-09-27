@@ -2,47 +2,45 @@
 
 **Live:** https://architect-2-aman.vercel.app (Vercel) · mirror: https://eppisai.github.io/architect-2/ (GitHub Pages) · **Source:** this repository
 
-A vibe-coding platform for people who don't write code and for developers who do. You describe what people need; Architect reads it into a starting pattern, shows the app as three steps, and lets you shape any step in place. One change flows through the plan, the preview, the agent, the generated code and the release. Developers get the same project as files, runs and environments without leaving the workspace.
+A vibe-coding platform for people who don't write code and for developers who do. Describe an app; Architect plans it, builds it while you watch, and puts it online. Change it by chatting, or by selecting any part of the preview. Developers get the same project as code, agents in their own framework, GitHub and a runnable export, without a separate "developer mode".
 
 ## Try it in three minutes
 
-1. **Home.** Keep the example brief or pick one under *Explore examples*, then *Shape this idea*. Sign in with any provider (simulated) or *Try the demo workspace*; your brief survives sign-in.
-2. **Shape.** Architect reads the brief into the closest of three patterns (answers from documents, requests sorted and routed, answers from your numbers), names the app and guesses the audience. Change any of it, then *Create the plan*.
-3. **Plan.** Select **step 2** and change how it behaves. Review the before/after, apply, and watch the plan cards update. *Undo* is one click.
-4. **Build → App.** Try the sample inputs, including the one the app cannot answer. Open the supporting evidence. Every input is recorded in **Runs** with a trace.
-5. **Chat.** Type “shorter answers and show sources” (or “rename it to Help Hub”). The chat proposes a reviewable change instead of applying it silently.
-6. **Agents.** Edit behavior, toggle tools (turn off source reading and the app answers with a setup state), run a test, switch the framework (Lyzr managed, LangGraph, CrewAI, OpenAI Agents SDK, custom) and add a second agent. **Code** shows the generated files change with you; download them as a ZIP that runs: `npm run dev` serves the app and its API, `npm test` runs its tests.
-7. **Changes.** Connect a demo repository, see the field-level diff and the files affected, commit, then sync. Committed and synced are separate states.
-8. **Deploy.** Publish, watch the release progress, open the working recipient view, roll back to an earlier release, add a custom domain.
-9. **Import.** From Home, *Import a project* → GitHub or ZIP → inspection → *What I found* → pick a first change. The imported project keeps its framework, sign-in and baseline; the change arrives as a proposal.
+1. **Home.** Type any idea ("a CRM for my gym", "an expense tracker for my team") or pick a template. *Build it* opens a sign-in dialog over Home with your idea still visible; Google signs you in with one click (simulated).
+2. **Watch it build.** The first chat reply is the plan: pages, agents, data, sign-in and look, named from your own words. Steps stream in the chat, files appear in *Code*, and the preview fills in section by section.
+3. **Change it by chatting.** Try "add a dark mode and a feedback button under each answer", "add a leaderboard page", "make the agent friendlier and answer in Spanish" or "rename it to Help Hub". Each request lists what it changed and the files it touched, and becomes a version you can restore. "Undo that" works too.
+4. **Select to edit.** Turn on *Select* in the preview and click the answer card: it shows the agent behind it and lets you change behavior in place. The selection travels with your next chat message.
+5. **Agents, Code, Data.** Tabs above the canvas. Edit instructions, tools, framework (Lyzr managed, LangGraph, CrewAI, OpenAI Agents SDK or your own code) and test with a trace. Read the generated project with syntax highlighting, see which lines the last change added, and download it as a ZIP that runs (`npm run dev`, `npm test`).
+6. **GitHub and Publish** live in the top bar. Connect GitHub and every version is committed automatically. *Publish* runs pre-flight checks, shows progress, then gives you a working link, versions and rollback.
+7. **Import.** From Home, *Import from GitHub* reads an example repository (React, Clerk sign-in, a LangGraph agent), shows what it found, and opens it with your first change applied.
 
-## What is real and what is simulated
+## What is real and what is a stand-in
 
-| Real, in this browser | Simulated, clearly labelled |
+| Real, in this browser | Stand-in |
 |---|---|
-| Brief interpretation into three patterns, names and audience | Sign-in providers and email links (demo account, nothing sent) |
-| Projects, revisions, undo, release snapshots, rollback | AI generation and freeform edits (three deterministic patterns) |
-| Deterministic answers, routing and table math over editable local source text | Repository or archive inspection (one prepared fixture) |
-| Chat intents mapped to reviewable setting changes | Agent runtimes for the named frameworks (scaffold files only) |
-| Recorded runs with step traces | GitHub commit and sync (local states, no remote) |
-| Generated source as a runnable project (server, API engine, tests, stylesheet) in a real ZIP | Production URLs, deploy logs and DNS verification |
-| Working recipient route for each release | Studio agent catalog, connectors, invites |
+| Any prompt becomes a project named from its own words, with sample content in its subject (workplace, support, sales, fitness, restaurants, clinics, schools, shops, finance) | Language models: interpretation and answers are deterministic |
+| Chat requests become real changes (look, pages, copy, sign-in, agents, tools, instructions) with the exact files they touch | Sign-in providers and email links |
+| Every version restorable; undo from chat | GitHub, repository import (one prepared example) and hosting |
+| Answers, routing and number questions over your own editable text | Other agent frameworks: their files are written, not run |
+| Select-to-edit in the preview, linked to the agent behind each element | Custom domain verification |
+| Runs with traces; release snapshots with rollback; a working link for each release and for the draft | |
+| Generated source as a runnable project and a real ZIP | |
 
-Projects live in `localStorage`. A fresh browser starts empty; the account menu can reset the demo.
+Projects live in `localStorage`. The account menu can reset the demo. *What's real in this prototype* on Home says the same thing in the product.
 
 ## Feature map
 
 | Assignment item | Where |
 |---|---|
-| Authentication | Sign-in page (Google, GitHub, email link, demo), account menu, sign out, reset; app-side sign-in per project |
-| Homepage | Brief, examples, import, consult, recent projects with live/draft state and last action |
-| Chat window | Contextual to the selected step, proposes reviewable changes, records other requests |
-| App preview | Interactive per pattern, sample inputs, evidence, appearance, audience |
-| Agent section | Behavior, knowledge, tools, test panel, framework/model with setup status, add/attach/duplicate/custom agents, handoffs |
-| UI getting built | Reading, shaping, building and publishing progress with pause/skip |
-| GitHub integration | Connect, branch, working/committed/synced states, field diff, files affected, commit, sync; imported repos arrive connected |
-| Deploying the app | Preview vs production, publish flow, releases that snapshot settings, source, agents and tools, rollback, deploy log, custom domain, working recipient link |
-| Also | Import inspection, Code view with runnable ZIP export, Runs with traces, environment variables, members, archive, project export |
+| Authentication | Sign-in dialog over Home that keeps your idea; Google, GitHub, email link; account menu, sign out; sign-in for the generated app (by chat or in Publish) |
+| Homepage | Prompt with attachments, "use my agents" and Plan-first; templates; consultant; import; projects as thumbnails with live or draft state |
+| Chat window | Plan or Build mode, streamed steps, files changed, versions, suggestions, clarifying options, @-mentions, attachments, stop |
+| App preview | Browser frame, device sizes, pages, console with runs, select-to-edit, open in a new tab |
+| Agent section | Instructions, behavior, tools, framework and model with setup status, test with trace, runs, extra agents and handoffs |
+| UI getting built | First build streams steps, files and a skeleton that fills in; every later change streams too |
+| GitHub integration | Top-bar popover: connect, auto-commit every version, push, branch, pull request, clone command, per-file markers in Code |
+| Deploying the app | Publish popover: address, domain, who can open it, pre-flight checks, progress, live link, QR, releases, rollback, deploy log |
+| Also | Import, templates, consultant, version history, share and invites, usage and credits, project settings, environment variables, export |
 
 ## Run locally
 
@@ -56,15 +54,12 @@ Open `http://localhost:8080/`. No build step, no dependencies.
 node --test model.test.mjs
 ```
 
-Twenty-two model tests cover interpretation, all three patterns, chat intents, runs, tool permissions, generated files, changed-file tracking, release snapshots and rollback, the ZIP writer, and that each pattern's exported project answers through its API and passes its own tests.
+Thirty model tests cover naming from any prompt; every domain pack's sample questions for all three engines; chat requests becoming changes with the right files; versions and restore; releases, rollback and the ZIP; and exported projects that answer through their API and pass their own tests.
 
 ## Design notes
 
-- **Select, understand, change.** The plan is the app drawn as steps. Selecting a step opens the controls that shape it, and the same controls appear in the preview and the agent view. There is one source of truth for behavior.
-- **Nothing applies silently.** Chat, chips and forms all produce a proposal with a before/after and an example of the effect. Undo is always available; releases never change after the fact.
-- **Two audiences, one workspace.** Non-technical people never need the Developer section. Developers get files, runs, environments and framework setup on the same project, and see exactly which files a change touches.
-- **Honest boundaries.** Simulated services say so where they happen, once, without banners on every screen.
-
-## Not in this prototype
-
-Live model calls, real provider sign-in, repository cloning, framework execution, remote Git, hosting of generated apps, in-place file editing, a database for projects. Each has a designed place in the flow and a labelled stand-in.
+- **The app is always in the middle.** Chat on the left, the preview on the right. Preview, Code, Agents and Data are tabs on the same canvas; GitHub, Share and Publish sit in the top bar.
+- **Value before setup.** Name, pages, agents and sign-in are the first reply, not a form. Plan-first is a choice in the composer.
+- **Every change is visible and reversible.** Each request shows its steps and the files it touched, and becomes a version you can restore.
+- **Two depths, one project.** Every plain-language setting shows the file it writes; developers never switch products.
+- **Calm by default.** Warm paper, ink and one accent; big type only where it matters. The app you build has its own look inside the preview.

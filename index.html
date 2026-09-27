@@ -3,13 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#f4f6fa" />
-    <title>Architect — make your idea work</title>
+    <meta name="theme-color" content="#fbfaf7" />
+    <meta name="description" content="Architect: describe an app, and it builds the screens, the agents and the backend, then puts it online." />
+    <title>Architect · build apps and agents by describing them</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='7' fill='%231F2420'/%3E%3Cpath d='M6.5 16.5 12 7l5.5 9.5M8.8 13h6.4' stroke='%23FBFAF7' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div id="app"></div>
-    <div id="toast" role="status"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
     <dialog id="modal"></dialog>
     <script type="module" src="app.mjs"></script>
   </body>
