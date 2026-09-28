@@ -3,7 +3,7 @@ const copy = x => JSON.parse(JSON.stringify(x));
 export function platform(p) {
   p.platform ||= {};
   const s = p.platform;
-  s.architecture ||= 'managed';
+  s.architecture ||= p.imported ? 'repository' : 'managed';
   s.routes ||= [];
   s.routingConfigured ??= s.routes.length > 0;
   s.connections ||= [];

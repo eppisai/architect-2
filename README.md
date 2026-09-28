@@ -4,6 +4,18 @@
 
 A vibe-coding platform for people who don't write code and for developers who do. Describe an app; Architect plans it, builds it while you watch, and puts it online. Change it by chatting, or by selecting any part of the preview. Developers get the same project as code, agents in their own framework, GitHub and a runnable export, without a separate "developer mode".
 
+## Crafted discovery and coherent transitions — 28 September 2026
+
+Five custom AI-generated assets share a tactile paper, charcoal and muted green palette: three task-family covers and two transparent pictograms. Home, Templates, Marketplace and import/walkthrough entry use these assets; existing projects retain miniature app previews. Templates group choices by the job to be done, then show pages, agent, sample data and an example question before building. Images are optimized WebP assets, about 190 KB total; transparent icons retain alpha.
+
+The selected-answer agent link opens the responsible agent’s configuration directly. Publishing, release logs and project status use consistent demo terminology. Narrow workspace controls wrap without clipping, and labeled search inputs align with their action buttons.
+
+## Guided walkthroughs — 28 September 2026
+
+Choose **Take a guided walkthrough** beneath the Home composer. Create an app or import the prepared developer example; each gets a four-step guide with actions that open the relevant controls. Guidance can be hidden and reopened from the compass button, and its position is saved with the project. Advancing the guide does not perform or claim completion of the task.
+
+Agent workflow labels separate ownership from framework. New imported projects default to repository ownership; existing saved choices are preserved. Publish shows the actual browser-local demo URL next to Copy, with the illustrative production domain listed separately.
+
 ## Visual and navigation revision — 28 September 2026
 
 Reworked Home around a compact sidebar and focused composer after the user's comparison with current architect.new. Updated the builder to cool neutral surfaces, muted green accents, smaller headings and consistent controls. Project filters now open a focused library; template cards show app content; starter prompts retain an editable brief. Mobile navigation has an overlay, Escape dismissal and focus handling. Existing capability flows and the generated app's independent themes remain available.
@@ -74,7 +86,7 @@ Open `http://localhost:8080/`. No build step, no dependencies.
 node --test model.test.mjs capabilities.test.mjs
 ```
 
-Forty-five model tests cover naming from any prompt; every domain pack's sample questions for all three engines; chat requests becoming changes with the right files; versions and restore; releases, rollback and the ZIP; and exported projects that answer through their API and pass their own tests. Developer regression tests also cover configuration validation, edit/test/repair, branches, manual-code version restore and release rollback, including older snapshots.
+Forty-six model tests cover naming from any prompt; every domain pack's sample questions for all three engines; chat requests becoming changes with the right files; versions and restore; releases, rollback and the ZIP; and exported projects that answer through their API and pass their own tests. Developer regression tests also cover configuration validation, edit/test/repair, branches, manual-code version restore and release rollback, including older snapshots.
 
 ## Design notes
 
@@ -82,4 +94,4 @@ Forty-five model tests cover naming from any prompt; every domain pack's sample 
 - **Value before setup.** Name, pages, agents and sign-in are the first reply, not a form. Plan-first is a choice in the composer.
 - **Every change is visible and reversible.** Each request shows its steps and the files it touched, and becomes a version you can restore.
 - **Two depths, one project.** Every plain-language setting shows the file it writes; developers never switch products.
-- **Calm by default.** Warm paper, ink and one accent; big type only where it matters. The app you build has its own look inside the preview.
+- **Calm by default.** Cool neutral surfaces, charcoal and a muted green accent; big type only where it matters. The app you build has its own look inside the preview.

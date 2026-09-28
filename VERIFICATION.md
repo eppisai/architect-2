@@ -2,9 +2,23 @@
 
 This verifies the UX prototype, not external service integration. All data entered during the checks was example data. No hiring form was submitted.
 
+## Final coherence and artwork pass
+
+Fresh local Codex browser checks covered both guided journeys:
+
+- Home → guided create → retained idea at demo sign-in → build → sample answer → selection inspector → Detailed answer updates immediately → agent link opens the responsible agent’s Behavior configuration.
+- Refinement → changed files → demo release. Displayed URL and Copy target use the same actual browser-local URL; the production domain is labeled separately as illustrative.
+- Guided developer example → two setup-variable placeholders → data edit → two failed checks → reviewed source restore → five checks pass → feedback change → PR diff → merge → demo release.
+- Guide position persists on reopening a project; it can be hidden and restored. Next is manual navigation, not task-completion tracking.
+- Templates grouped by job; Gym member CRM inspection showed New request / My requests, Request sorter and a domain-specific sample question. Marketplace covers loaded. Knowledge / Database / App users retain shared navigation and explicit execution boundaries.
+- Both generated icons retain real alpha channels. The five optimized images total about 190 KB.
+- Desktop visual checks: Home, template groups/detail, walkthrough chooser, answer inspector, marketplace and release. Walkthrough chooser at 390px and 320px; workspace/publishing at 320px. Fixed minimum-width clipping that did not produce document overflow. Checked workspace at 320px has no visible buttons extending past the viewport.
+- Marketplace and database search use a shared aligned field/action layout. Marketplace input and Search button measured identical top/bottom edges and 40px height after the user flagged the original alignment.
+- No error-level console messages captured during local checks. These are bounded coherence checks, not participant validation or an exhaustive every-control accessibility audit.
+
 ## Automated checks
 
-`node --test model.test.mjs capabilities.test.mjs`: **45 passed, 0 failed**. Includes running the exported Node applications and their tests, generated ZIP contents, configuration validation, developer edit/test/repair and PR states, database record/schema validation, workflow conditions and cycles, disconnected and disabled agents, listing/access validation, analytics opt-out, design tokens, and independent version/release snapshots.
+`node --test model.test.mjs capabilities.test.mjs`: **46 passed, 0 failed**. Includes running the exported Node applications and their tests, generated ZIP contents, configuration validation, developer edit/test/repair and PR states, database record/schema validation, workflow conditions and cycles, disconnected and disabled agents, listing/access validation, analytics opt-out, design tokens, and independent version/release snapshots.
 
 JavaScript syntax checks and `git diff --check` also pass.
 

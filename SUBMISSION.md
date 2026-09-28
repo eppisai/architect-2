@@ -3,6 +3,20 @@
 **Live prototype:** https://architect-2-aman.vercel.app  
 **Public source:** https://github.com/eppisai/architect-2
 
+## Submission copy
+
+I designed Architect 2.0 around two starting points: a person with an idea and a developer with an existing repository. Both use one workspace to build, try, inspect and release an agentic application.
+
+Three decisions shape the experience:
+
+- **Connect the interface to behavior.** Select an answer in Preview to discover the responsible agent and change its behavior in context.
+- **Reveal technical depth when it is useful.** Preview, Code, Agents and Data share project state; developers get setup, diffs, tests and PR review without a separate product or mode.
+- **Make changes recoverable.** Changes become inspectable versions; failed checks lead to a reviewable repair; publishing creates a snapshot with rollback.
+
+On the live site, choose **Take a guided walkthrough**. “Create and improve an app” demonstrates prompt → build → selection → refinement → publish. “Continue an existing project” demonstrates example import → setup → edit → failed tests → repair → PR → publish. Each creates a separate example and provides optional guidance beside the workspace.
+
+The prototype has working browser persistence, supported edits, local answers, database/schema validation, version recovery and runnable source export. AI generation uses three deterministic patterns. Sign-in providers, remote imports/GitHub, external frameworks and deployments are simulated. Demo release links work only in the browser that created them.
+
 ## Product summary
 
 Architect 2.0 brings creating an agentic application and continuing an existing project into one workspace. Start with an idea or a repository, try the app, change its interface and agent behavior, review the resulting files, and publish a version.
@@ -31,7 +45,7 @@ No account, credentials or API keys are required. Provider buttons simulate sign
 
 ### 2. Continue a developer project
 
-1. Return Home, choose **Import from GitHub → Try the example → Open in workspace**. The inspection describes a prepared React/Clerk/LangGraph scenario; the exported runtime is the prototype’s small Node application, not that repository.
+1. Return Home, choose **Import a repository → Try the example → Open in workspace**. The inspection describes a prepared React/Clerk/LangGraph scenario; the exported runtime is the prototype’s small Node application, not that repository.
 2. Open **Code → Start app**. Add the two missing variable names as prompted. These are sample setup states; no real secrets or server processes are used.
 3. Open **example-handbook.txt → Edit**, replace its content with **“Working hours: Core hours are 10 to 3.”**, and Save. **Run tests** shows two failed sample-answer checks.
 4. Choose **Fix with Architect**, then the proposed source restore in chat. The checks rerun and pass. Add feedback buttons through chat to leave a useful change on the branch.
@@ -47,7 +61,7 @@ No account, credentials or API keys are required. Provider buttons simulate sign
 
 ## Validation and scope
 
-The repository has **45 passing model tests**, including actual exported-server checks, exported test suites, invalid configuration, code restore and release rollback. Desktop and phone walkthroughs cover the core journeys. The [coverage checklist](COVERAGE.md) maps all explicit requirements and the 24 researched current-Architect capability families to the prototype. These checks do not establish production integration or exhaustive account-level parity.
+The repository has **46 passing model tests**, including actual exported-server checks, exported test suites, invalid configuration, code restore and release rollback. Desktop and phone walkthroughs cover the core journeys. The [coverage checklist](COVERAGE.md) maps all explicit requirements and the 24 researched current-Architect capability families to the prototype. These checks do not establish production integration or exhaustive account-level parity.
 
 The completed prototype also covers agent workflow routing, scoped connections, collections/schema editing, reusable design systems, agentlet discovery, marketplace listing configuration, analytics and app-user/session settings. The next engineering step after this UX prototype is real repository/runtime support, authentication and a shared database.
 

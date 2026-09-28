@@ -61,3 +61,16 @@ test('analytics obeys opt-out and theme changes clear custom design overrides',(
  platform(p).design={tokens:{accent:'#123456'}};const themes={forest:{accent:'#000000'}};
  assert.equal(themeFor(p,themes).accent,'#123456');applyOps(p,[{type:'settings',change:{theme:'forest'}}]);assert.equal(themeFor(p,themes).accent,'#000000');
 });
+
+
+test('imported agents default to repository ownership without overwriting a saved choice', () => {
+ const imported=createProject('Existing app',true);
+ assert.equal(platform(imported).architecture,'repository');
+ assert.equal(platform(createProject('Policy assistant')).architecture,'managed');
+ platform(imported).architecture='managed';
+ assert.equal(platform(imported).architecture,'managed');
+ assert.ok(!generateFiles(imported).some(f=>f.path==='agenticos/workbench.md'));
+ delete imported.platform.architecture;
+ assert.equal(platform(imported).architecture,'repository');
+ assert.ok(generateFiles(imported).some(f=>f.path==='agenticos/workbench.md'));
+});

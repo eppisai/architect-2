@@ -63,7 +63,7 @@ Competitor research covers all nine named references, with official documentatio
 
 ## Verification
 
-Run `node --test model.test.mjs capabilities.test.mjs`. The 45 tests include exported servers, source archives, invalid code/configuration, branch/PR transitions, database validation, route conditions/cycles, permissions, listing validation, analytics opt-out, theme consistency, version restore and release rollback.
+Run `node --test model.test.mjs capabilities.test.mjs`. The 46 tests include exported servers, source archives, invalid code/configuration, branch/PR transitions, database validation, route conditions/cycles, permissions, listing validation, analytics opt-out, theme consistency, version restore and release rollback.
 
 Browser verification on this pass covers prompt → demo sign-in → build; plan-first → plan/mockup handoff; agent add/configure → conditional route → workflow test; database invalid/valid record; app access; connection configuration/test; repository ownership; create/apply design system; publish → released answer/feedback → analytics. Home and workflow were checked at 390px and Database at 320px without document-level horizontal overflow. See [VERIFICATION.md](VERIFICATION.md) for final walkthrough results.
 
