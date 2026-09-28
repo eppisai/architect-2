@@ -1,116 +1,112 @@
-"""Render the submission's proposed production architecture diagram.
-
-Requires matplotlib. The generated PNG is the upload-friendly artifact; the SVG is
-an editable vector copy. This is a design proposal, not the live demo topology.
-"""
-
+"""Render the proposed Architect 2.0 production architecture as a PNG."""
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
-
+from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch
 
 ROOT = Path(__file__).resolve().parent
+BG = "#F5F8F6"
 INK = "#202725"
-MUTED = "#61706A"
-GREEN = "#4C7868"
-LINE = "#DCE5E0"
-BG = "#F7F9F8"
+MUTED = "#586861"
+GREEN = "#3F725D"
+PALE = "#EAF3ED"
+LINE = "#D3E1D8"
+ORANGE = "#C27745"
 
-fig, ax = plt.subplots(figsize=(16, 9), dpi=180)
+fig, ax = plt.subplots(figsize=(18.5, 10), dpi=170)
 fig.patch.set_facecolor(BG)
 ax.set_facecolor(BG)
-ax.set_xlim(0, 1600)
-ax.set_ylim(0, 900)
+ax.set_xlim(0, 1850)
+ax.set_ylim(0, 1000)
 ax.axis("off")
 
 
-def box(x, y, w, h, heading, detail, fill="#FFFFFF", edge=LINE):
-    ax.add_patch(
-        FancyBboxPatch(
-            (x, y), w, h,
-            boxstyle="round,pad=0.018,rounding_size=17",
-            linewidth=1.4, edgecolor=edge, facecolor=fill,
-        )
-    )
-    ax.text(x + 22, y + h - 35, heading, ha="left", va="top",
-            fontsize=14.4, fontweight="bold", color=INK)
-    ax.text(x + 22, y + h - 69, detail, ha="left", va="top",
-            fontsize=10.9, color=MUTED, linespacing=1.5)
+def card(x, y, w, h, number, eyebrow, title, body, tint=False):
+    ax.add_patch(FancyBboxPatch(
+        (x, y), w, h, boxstyle="round,pad=0.02,rounding_size=23",
+        linewidth=1.8, edgecolor=LINE if not tint else "#AFCFBA",
+        facecolor="#FFFFFF" if not tint else PALE))
+    ax.add_patch(Circle((x + 36, y + h - 38), 18, facecolor=GREEN, edgecolor="none"))
+    ax.text(x + 36, y + h - 38, number, ha="center", va="center",
+            color="white", fontsize=11, fontweight="bold")
+    ax.text(x + 65, y + h - 38, eyebrow.upper(), va="center",
+            fontsize=10.8, fontweight="bold", color=GREEN)
+    ax.text(x + 25, y + h - 83, title, va="top",
+            fontsize=17.2, fontweight="bold", color=INK, linespacing=1.2)
+    ax.text(x + 25, y + h - 151, body, va="top",
+            fontsize=12.1, color=MUTED, linespacing=1.45)
 
 
-def arrow(x1, y1, x2, y2, label=None, color=GREEN):
+def support(x, y, w, h, title, body):
+    ax.add_patch(FancyBboxPatch(
+        (x, y), w, h, boxstyle="round,pad=0.02,rounding_size=19",
+        linewidth=1.4, edgecolor=LINE, facecolor="#FFFFFF"))
+    ax.text(x + 24, y + h - 35, title, va="top", fontsize=15.2,
+            fontweight="bold", color=INK)
+    ax.text(x + 24, y + h - 75, body, va="top", fontsize=11.8,
+            color=MUTED, linespacing=1.35)
+
+
+def arrow(x1, y1, x2, y2, label=None, color=GREEN, lw=2.6):
     ax.add_patch(FancyArrowPatch(
-        (x1, y1), (x2, y2), arrowstyle="-|>", mutation_scale=16,
-        linewidth=2.2, color=color, shrinkA=0, shrinkB=0,
-        connectionstyle="arc3,rad=0",
-    ))
+        (x1, y1), (x2, y2), arrowstyle="-|>", mutation_scale=19,
+        linewidth=lw, color=color, shrinkA=0, shrinkB=0))
     if label:
-        ax.text((x1 + x2) / 2, y1 + 11, label, ha="center", va="bottom",
-                fontsize=9.3, color=GREEN, fontweight="medium")
+        ax.text((x1 + x2)/2, y1 + 12, label, ha="center", va="bottom",
+                fontsize=10.5, color=color, fontweight="medium")
 
 
-ax.text(72, 834, "Architect 2.0", fontsize=29, fontweight="bold", color=INK)
-ax.text(72, 794, "Proposed production architecture  /  one workspace, isolated execution",
-        fontsize=15, color=MUTED)
-ax.text(1532, 837, "SUBMISSION DESIGN", ha="right", fontsize=10.5,
+ax.text(55, 925, "Architect 2.0", fontsize=32, fontweight="bold", color=INK)
+ax.text(55, 883, "From an idea or a repository to a reviewable agentic application",
+        fontsize=16, color=MUTED)
+ax.text(1790, 931, "PROPOSED PRODUCTION SYSTEM", ha="right",
+        fontsize=11, fontweight="bold", color=GREEN)
+ax.plot([55, 1795], [854, 854], color=LINE, linewidth=1.5)
+
+# The five central decisions form one legible left-to-right story.
+y, h = 465, 266
+card(55, y, 280, h, "01", "Start", "Idea or\nrepository", "Prompt, template, or pinned\nGitHub commit")
+card(405, y, 280, h, "02", "Experience", "One project\nworkspace", "Chat · Preview · Agents\nCode · Data", tint=True)
+card(755, y, 280, h, "03", "Control", "Plan and\ncoordinate", "OIDC + roles · project versions\nDurable jobs + preview proxy")
+card(1105, y, 330, h, "04", "Execution", "Build in an\nisolated sandbox", "gVisor + quotas · agent harness\nFramework adapters · run · test")
+card(1505, y, 290, h, "05", "Ship", "Review and\npublish", "Tested artifact · deploy controller\nRelease history + rollback", tint=True)
+
+for a, b, label in [(335, 405, "intent"), (685, 755, "versioned job"),
+                    (1035, 1105, "scoped run"), (1435, 1505, "tested build")]:
+    arrow(a, 598, b - 6, 598, label)
+
+# The return path makes the preview relationship explicit without crossing cards.
+ax.plot([1270, 1270, 545], [733, 793, 793], color=ORANGE, linewidth=2.3)
+arrow(545, 793, 545, 736, color=ORANGE, lw=2.3)
+ax.text(905, 803, "Live preview returns through the authenticated proxy",
+        ha="center", fontsize=11.8, color=ORANGE, fontweight="medium")
+
+ax.text(55, 416, "FOUNDATION & EXTERNAL CONNECTIONS", fontsize=11.5,
         fontweight="bold", color=GREEN)
-ax.plot([72, 1532], [769, 769], color=LINE, linewidth=1.4)
+ax.plot([55, 1795], [398, 398], color=LINE, linewidth=1.2)
 
-for x, title in [(72, "EXPERIENCE"), (423, "CONTROL PLANE"),
-                 (800, "EXECUTION & INTEGRATIONS"), (1190, "DESTINATIONS")]:
-    ax.text(x, 733, title, fontsize=11, fontweight="bold", color=GREEN)
+support(55, 186, 280, 174, "GitHub App", "Repo-scoped import\nBranch, checks, pull request")
+support(755, 186, 280, 174, "Durable state", "PostgreSQL · object storage\nJob queue · secrets manager")
+support(1105, 186, 330, 174, "Model + tool gateway", "Provider adapters + budgets\nPermissioned tools · scoped egress")
+support(1505, 186, 290, 174, "Deployed app", "HTTPS + custom domain\nIndependent runtime scaling")
 
-rows = [553, 346, 139]
-height = 151
+# Short vertical connectors show ownership; detailed protocols live in the MD.
+for cx in (195, 895, 1270, 1650):
+    ax.plot([cx, cx], [361, 456], color=GREEN, linewidth=1.6, alpha=.68,
+            linestyle=(0, (3, 4)))
 
-box(72, rows[0], 275, height, "Build & preview",
-    "Prompt, plan, chat, selection\nPreview beside the agent")
-box(423, rows[0], 300, height, "API + preview proxy",
-    "OIDC, project roles, signed routes\nSSE / WebSocket progress")
-box(800, rows[0], 310, height, "Agent sandbox",
-    "gVisor sandbox, harness, adapters\nModel gateway + scoped tools", fill="#EFF6F2", edge="#B9D0C2")
-box(1190, rows[0], 342, height, "Models & connections",
-    "Provider adapters, MCP / API / A2A\nCredentials via policy egress")
-
-box(72, rows[1], 275, height, "Inspect & review",
-    "Code, data, diffs, tests\nVersions and repair approval")
-box(423, rows[1], 300, height, "Project API + job queue",
-    "Versioned specification, traces\nDurable plan / build / test jobs")
-box(800, rows[1], 310, height, "GitHub App + sync",
-    "Pinned import, isolated branch\nChecks, PR, webhook reconcile", fill="#EFF6F2", edge="#B9D0C2")
-box(1190, rows[1], 342, height, "GitHub repository",
-    "Repository-owned source of truth\nLeast-privilege installation")
-
-box(72, rows[2], 275, height, "Publish & recover",
-    "Preflight, access, domain\nRelease history and rollback")
-box(423, rows[2], 300, height, "Release controller",
-    "Approve immutable artifact\nPromote, observe, roll back")
-box(800, rows[2], 310, height, "Build & runtime",
-    "Sandboxed build and tests\nCDN + managed containers", fill="#EFF6F2", edge="#B9D0C2")
-box(1190, rows[2], 342, height, "Deployed application",
-    "HTTPS, health checks, analytics\nSeparate preview / production")
-
-for y, labels in [(rows[0] + height/2, ["intent", "scoped job", "policy calls"]),
-                  (rows[1] + height/2, ["review", "source ops", "branch / PR"]),
-                  (rows[2] + height/2, ["approve", "artifact", "release"])]:
-    arrow(347, y, 417, y, labels[0])
-    arrow(723, y, 794, y, labels[1])
-    arrow(1110, y, 1184, y, labels[2])
-
-ax.add_patch(FancyBboxPatch((423, 26), 1109, 76,
-                            boxstyle="round,pad=0.018,rounding_size=15",
-                            linewidth=1.2, edgecolor=LINE, facecolor="#EAF0ED"))
-ax.text(446, 75, "SHARED STATE & GUARDRAILS",
-        fontsize=10.8, fontweight="bold", color=GREEN, va="center")
-ax.text(446, 47,
-        "PostgreSQL metadata  ·  durable queue  ·  object-storage snapshots  ·  secrets manager  ·  logs, traces and budgets",
-        fontsize=11.4, color=INK, va="center")
-ax.text(72, 51, "Live demo: static UI\n+ browser storage",
-        fontsize=10.3, color=MUTED, va="center", linespacing=1.35)
+ax.add_patch(FancyBboxPatch((55, 65), 1740, 70,
+                            boxstyle="round,pad=0.02,rounding_size=16",
+                            linewidth=0, facecolor="#E6EFE9"))
+ax.text(77, 100, "SCALE & SAFETY", va="center", fontsize=11.8,
+        fontweight="bold", color=GREEN)
+ax.text(250, 100,
+        "Stateless control plane  ·  queued, quota-limited sandboxes  ·  separate app runtime  ·  signed preview routes  ·  no secrets in source",
+        va="center", fontsize=12.3, color=INK)
+ax.text(55, 26, "Live submission: static browser prototype with local storage. The services above are the production design, not running integrations.",
+        fontsize=10.8, color=MUTED)
 
 fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-for extension in ("png", "svg"):
-    fig.savefig(ROOT / f"architecture-diagram.{extension}",
-                dpi=180, facecolor=BG, bbox_inches="tight", pad_inches=0)
+fig.savefig(ROOT / "architecture-diagram.png", dpi=170,
+            facecolor=BG, bbox_inches="tight", pad_inches=0)
 plt.close(fig)
