@@ -469,3 +469,145 @@ test("an exported project from a domain pack still runs its own tests", () => {
     assert.match(out, /# pass 3\b/, `${domain}/${archetype}`);
   }
 });
+
+import {
+  configOps,
+  editFile,
+  dataPath,
+  lineDiff,
+  runTests,
+  suggestFixes,
+  startBranch,
+  branchSummary,
+  openPullRequest,
+  mergePullRequest,
+  filesAt,
+} from "./model.mjs";
+
+test("editing architect.json changes the project, and bad values are refused with a reason", () => {
+  const p = createProject("policy app");
+  const cfg = JSON.parse(generateFiles(p).find((f) => f.path === "architect.json").text);
+  cfg.theme = "plum";
+  cfg.agent.behavior.length = "detailed";
+  cfg.name = "Help Hub";
+  const { ops } = configOps(p, JSON.stringify(cfg));
+  applyOps(p, ops);
+  assert.equal(p.settings.theme, "plum");
+  assert.equal(p.settings.length, "detailed");
+  assert.equal(p.name, "Help Hub");
+  assert.match(configOps(p, "{ nope").error, /isn’t valid JSON/);
+  cfg.theme = "neon";
+  assert.match(configOps(p, JSON.stringify(cfg)).error, /Unknown theme “neon”.*forest/);
+});
+
+test("editing the data file changes answers; other files are kept as your edits and exported", () => {
+  const p = createProject("policy app");
+  const path = dataPath(p);
+  applyOps(p, editFile(p, path, "Leave policy: No carryover this year.\n").ops);
+  assert.match(answer(p, "Can I carry over my leave?").text, /No carryover/);
+  applyOps(p, editFile(p, "app/app.js", "console.log('mine');").ops);
+  const f = generateFiles(p).find((x) => x.path === "app/app.js");
+  assert.equal(f.text, "console.log('mine');");
+  assert.equal(f.edited, true);
+});
+
+test("tests catch a broken data edit and a syntax error, and suggest fixes that work", () => {
+  const p = createProject("policy app");
+  assert.equal(runTests(p).failed, 0);
+  applyOps(p, editFile(p, dataPath(p), "Working hours: Core hours are 10 to 3.").ops);
+  let report = runTests(p);
+  assert.equal(report.failed, 2);
+  const fixes = suggestFixes(p, report);
+  assert.match(fixes[0].label, /Restore Example handbook from version 1/);
+  applyOps(p, fixes[0].ops);
+  assert.equal(runTests(p).failed, 0);
+  applyOps(p, editFile(p, "app/app.js", "const x = ;").ops);
+  report = runTests(p);
+  assert.ok(report.results.some((r) => /app\/app.js has valid syntax/.test(r.name) && !r.ok && /SyntaxError/.test(r.detail)));
+  applyOps(p, suggestFixes(p, report).find((f) => /Revert app\/app.js/.test(f.label)).ops);
+  assert.equal(runTests(p).failed, 0);
+});
+
+test("line diffs mark added and removed lines", () => {
+  const d = lineDiff(["a", "b", "c"], ["a", "x", "c", "d"]);
+  assert.deepEqual(d.map((x) => x.t + x.text), ["=a", "-b", "+x", "=c", "+d"]);
+});
+
+test("a branch collects versions until its pull request is merged into main", () => {
+  const p = createProject("policy app");
+  startBranch(p, "architect/dark-mode");
+  applyOps(p, detectOps(p, "add a dark mode").ops);
+  const sum = branchSummary(p);
+  assert.equal(sum.versions.length, 1);
+  assert.ok(sum.files.some((f) => f.path === "app/theme-dark.css"));
+  assert.equal(filesAt(p, sum.from).some((f) => f.path === "app/theme-dark.css"), false);
+  const pr = openPullRequest(p, "Dark mode", "");
+  assert.equal(pr.number, 12);
+  mergePullRequest(p);
+  assert.equal(p.git.branch, "main");
+  assert.equal(branchSummary(p), null);
+  assert.equal(p.pr.state, "merged");
+});
+
+test("restoring an unedited version clears overrides and added files, including legacy snapshots", () => {
+  for (const legacy of [false, true]) {
+    const p = createProject("policy app");
+    const first = p.versions[0];
+    if (legacy) delete first.state.fileEdits;
+    const original = generateFiles(p);
+    applyOps(p, editFile(p, "app/app.js", "const broken = ;").ops);
+    applyOps(p, editFile(p, "app/extra.js", "const extra = true;").ops);
+    assert.ok(runTests(p).failed > 0);
+    restoreVersion(p, first.id);
+    assert.deepEqual(generateFiles(p), original);
+    assert.equal(runTests(p).failed, 0);
+  }
+});
+
+test("restoring edited versions keeps independent copies of the saved code", () => {
+  const p = createProject("policy app");
+  const path = "app/app.js";
+  const saved = applyOps(p, editFile(p, path, "// version A").ops).version;
+  applyOps(p, editFile(p, path, "// version B").ops);
+  restoreVersion(p, saved.id);
+  assert.equal(generateFiles(p).find((f) => f.path === path).text, "// version A");
+  p.fileEdits[path] = "// later edit";
+  assert.equal(saved.state.fileEdits[path], "// version A");
+});
+
+test("release rollback restores manual code and removes overrides absent from older releases", () => {
+  const p = createProject("policy app");
+  const path = "app/app.js";
+  const original = generateFiles(p).find((f) => f.path === path).text;
+  const legacy = publish(p);
+  delete legacy.fileEdits;
+  applyOps(p, editFile(p, path, "// release A").ops);
+  const releaseA = publish(p);
+  p.fileEdits[path] = "// draft B";
+  applyOps(p, editFile(p, "app/extra.js", "// new file").ops);
+  assert.equal(releaseA.fileEdits[path], "// release A");
+  const restored = rollback(p, releaseA);
+  assert.equal(generateFiles(p).find((f) => f.path === path).text, "// release A");
+  assert.equal(generateFiles(p).some((f) => f.path === "app/extra.js"), false);
+  assert.deepEqual(restored.fileEdits, releaseA.fileEdits);
+  p.fileEdits[path] = "// another edit";
+  assert.equal(restored.fileEdits[path], "// release A");
+  rollback(p, legacy);
+  assert.equal(generateFiles(p).find((f) => f.path === path).text, original);
+  assert.deepEqual(p.fileEdits, {});
+});
+
+test("invalid configuration shapes return actionable errors without changing the project", () => {
+  const p = createProject("policy app");
+  const before = JSON.stringify(p);
+  for (const value of [null, [], "config", 42, false]) {
+    assert.match(configOps(p, JSON.stringify(value)).error, /must contain a JSON object/);
+  }
+  for (const value of [{ agent: null }, { ui: [] }, { agent: { behavior: "short" } }]) {
+    assert.match(configOps(p, JSON.stringify(value)).error, /must be a JSON object/);
+  }
+  assert.match(configOps(p, '{"ui":{"feedback":"false"}}').error, /must be true or false/);
+  assert.match(configOps(p, '{"agent":{"tools":"read_source"}}').error, /array of tool names/);
+  assert.equal(JSON.stringify(p), before);
+  assert.deepEqual(configOps(p, '{}'), { ops: [] });
+});

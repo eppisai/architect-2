@@ -31,6 +31,16 @@ import {
   diffFiles,
   checkpoint,
   pageKind,
+  editFile,
+  dataPath,
+  lineDiff,
+  runTests,
+  suggestFixes,
+  startBranch,
+  branchSummary,
+  openPullRequest,
+  mergePullRequest,
+  filesAt,
 } from "./model.mjs";
 import { zipBytes } from "./zip.mjs";
 
@@ -98,6 +108,9 @@ const ICONS = {
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
   code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
   home: '<path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  pr: '<circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v12"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/>',
   link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
 };
 const icon = (n, s = 16, cls = "") =>
@@ -168,6 +181,15 @@ const ui = {
   gitStep: null,
   domainDraft: false,
   stick: true,
+  codeMode: "files",
+  cmp: "prev",
+  focusPath: "",
+  editing: false,
+  editText: "",
+  editError: "",
+  term: [],
+  termOpen: true,
+  repoQuery: "",
 };
 let build = null,
   pubTimer = null,
@@ -190,6 +212,11 @@ const STUDIO_AGENTS = [
   ["Policy summarizer", "Summarize the answer", "Ops"],
   ["Escalation router", "Escalate to a person", "Support"],
   ["Translator", "Translate the answer", "Localization"],
+];
+const REPOS = [
+  { repo: "northstar/support-app", desc: "React · LangGraph agent · Clerk sign-in", updated: "3 days ago", kind: "ok" },
+  { repo: "northstar/rails-admin", desc: "Ruby on Rails 7", updated: "a month ago", kind: "unsupported" },
+  { repo: "acme/billing-service", desc: "Private · acme organization", updated: "", kind: "access" },
 ];
 const EL_LABELS = { brand: "App name", nav: "Navigation", hero: "Headline", form: "Question form", chips: "Sample questions", answer: "Answer card", source: "Source" };
 
@@ -383,12 +410,12 @@ function buildCard(m) {
     : m.paused != null && !active
       ? `<div class="row"><span class="small muted">Paused.</span>${btn("Resume", "resume-build", "btn sm", `data-id="${m.id}"`)}</div>`
       : "";
-  return `${m.intro ? `<p>${esc(m.intro)}</p>` : ""}<div class="steps">${steps}</div>${m.done ? fileChips(m.files) : ""}${end}${m.done && m.versionN ? `<div class="version-line">Version ${m.versionN}${m.versionId && m.versionId !== latest ? btn("Restore", "restore", "", `data-id="${m.versionId}"`) : ""}</div>` : ""}`;
+  return `${m.intro ? `<p>${esc(m.intro)}</p>` : ""}<div class="steps">${steps}</div>${m.done ? fileChips(m.files, m.versionId) : ""}${end}${m.done && m.versionN ? `<div class="version-line">Version ${m.versionN}${m.versionId && m.versionId !== latest ? btn("Restore", "restore", "", `data-id="${m.versionId}"`) : ""}</div>` : ""}`;
 }
-function fileChips(files = []) {
+function fileChips(files = [], versionId = "") {
   if (!files.length) return "";
   const shown = files.slice(0, 4);
-  return `<div class="files">${shown.map((f) => `<button type="button" class="file-chip" data-action="code-open" data-path="${esc(f.path)}" title="${esc(f.path)}">${esc(f.path.split("/").pop())}${f.add ? `<span class="add">+${f.add}</span>` : ""}${f.del ? `<span class="del">−${f.del}</span>` : ""}</button>`).join("")}${files.length > 4 ? btn(`+${files.length - 4} more`, "tab", "file-chip", 'data-tab="code"') : ""}</div>`;
+  return `<div class="files">${shown.map((f) => `<button type="button" class="file-chip" data-action="open-diff" data-path="${esc(f.path)}" data-v="${versionId}" title="See the change to ${esc(f.path)}">${esc(f.path.split("/").pop())}${f.add ? `<span class="add">+${f.add}</span>` : ""}${f.del ? `<span class="del">−${f.del}</span>` : ""}</button>`).join("")}${files.length > 4 ? btn(`+${files.length - 4} more`, "open-diff", "file-chip", `data-v="${versionId}"`) : ""}</div>`;
 }
 
 // Canvas
@@ -569,44 +596,159 @@ function highlightLine(line, ext) {
   }
   return out + esc(line.slice(last));
 }
+function compareBase() {
+  const sum = p.git.connected ? branchSummary(p) : null;
+  if (ui.cmp === "main" && sum) return { label: sum.base, files: filesAt(p, sum.from) };
+  if (ui.cmp === "none") return { label: "the start", files: [] };
+  const v = ui.cmp && ui.cmp !== "prev" && ui.cmp !== "main" ? p.versions.find((x) => x.id === ui.cmp) : p.versions.at(-2) || p.versions[0];
+  if (!v) return { label: "the start", files: [] };
+  return { label: `version ${v.n}`, files: filesAt(p, v) };
+}
+function diffBlock(path, before, after, status, open) {
+  const ops = lineDiff(before == null ? [] : before.replace(/\n$/, "").split("\n"), after == null ? [] : after.replace(/\n$/, "").split("\n"));
+  const ext = path.split(".").pop();
+  let o = 0,
+    n = 0;
+  const rows = ops.map((d) => (d.t === "=" ? { ...d, o: ++o, n: ++n } : d.t === "-" ? { ...d, o: ++o } : { ...d, n: ++n }));
+  const keep = new Set();
+  rows.forEach((r, i) => {
+    if (r.t !== "=") for (let k = i - 3; k <= i + 3; k++) keep.add(k);
+  });
+  let html = "",
+    gap = 0;
+  rows.forEach((r, i) => {
+    if (!keep.has(i)) return gap++;
+    if (gap) html += `<span class="dl gap">⋯ ${plural(gap, "unchanged line")}</span>`;
+    gap = 0;
+    html += `<span class="dl ${r.t === "+" ? "d-add" : r.t === "-" ? "d-del" : ""}"><i>${r.o ?? ""}</i><i>${r.n ?? ""}</i><b>${r.t === "=" ? " " : r.t === "-" ? "−" : "+"}</b>${highlightLine(r.text, ext)}</span>`;
+  });
+  if (gap && html) html += `<span class="dl gap">⋯ ${plural(gap, "unchanged line")}</span>`;
+  const add = rows.filter((r) => r.t === "+").length,
+    del = rows.filter((r) => r.t === "-").length;
+  return `<details class="diff-file" ${open ? "open" : ""} id="diff-${slug(path)}"><summary><span class="mark ${status}">${status}</span><span class="grow mono">${esc(path)}</span><span class="add">+${add}</span><span class="del">−${del}</span>${after != null ? btn("Open", "code-file", "btn sm quiet", `data-path="${esc(path)}" data-mode="files"`) : ""}</summary><pre class="diff">${html || '<span class="dl gap">No line changes</span>'}</pre></details>`;
+}
+function termPanel() {
+  const lines = ui.term.length ? ui.term : [{ t: "Demo terminal: checks run in this browser; process and Git commands are simulated. Type help for more.", c: "dim" }];
+  return `<div class="term ${ui.termOpen ? "open" : ""}"><div class="term-head"><button type="button" class="term-toggle" data-action="term-toggle" aria-expanded="${ui.termOpen}">${icon("terminal", 13)}Terminal · demo${icon(ui.termOpen ? "chevron" : "up", 12)}</button><span class="grow"></span>${btn(`${icon("play", 11)}Run tests`, "term-run", "btn sm dark", 'data-cmd="npm test"')}${btn("Start app", "term-run", "btn sm dark", 'data-cmd="npm run dev"')}</div>${ui.termOpen ? `<div class="term-body" id="term-body">${lines.map((l) => `<div class="tl ${l.c || ""}">${l.html ?? esc(l.t)}</div>`).join("")}<form id="term-form" class="term-input"><span aria-hidden="true">$</span><label class="sr" for="term-input">Terminal command</label><input id="term-input" autocomplete="off" spellcheck="false" placeholder="npm test · npm run dev · git status · git log · help"></form></div>` : ""}</div>`;
+}
 function codePane() {
   const files = visibleFiles();
+  const building = firstBuildLevel() < 99;
   if (!files.length) return `<div class="code-wrap"><div class="tree"></div><div class="viewer"><div class="empty" style="margin:auto"><div class="display">Writing files…</div><p>They appear here as the build creates them.</p></div></div></div>`;
   if (!files.some((f) => f.path === ui.codeFile)) ui.codeFile = (files.find((f) => f.path === "app/index.html") || files[0]).path;
   const f = files.find((x) => x.path === ui.codeFile);
-  const base = p.git.connected && p.git.committedRevision ? committedFiles(p) : null;
-  const marks = new Map((base ? diffFiles(base, files) : []).map((d) => [d.path, d.status]));
-  // Lines the last version added to this file
-  let added = new Set();
-  const prev = p.versions.at(-2);
-  if (prev) {
-    const old = generateFiles({ ...p, ...clone(prev.state) }).find((x) => x.path === f.path);
-    if (old && old.text !== f.text) {
-      const pool = new Map();
-      for (const l of old.text.split("\n")) pool.set(l, (pool.get(l) || 0) + 1);
-      f.text.split("\n").forEach((l, k) => {
-        if (pool.get(l)) pool.set(l, pool.get(l) - 1);
-        else if (l.trim()) added.add(k);
-      });
-    }
-  }
-  // Folder tree
+  const mode = building ? "files" : ui.codeMode;
+  const base = building ? { label: "", files } : compareBase();
+  const changes = building ? [] : diffFiles(base.files, files);
+  const marks = new Map(changes.map((d) => [d.path, d.status]));
+  const added = new Set();
+  const baseFile = base.files.find((x) => x.path === f.path);
+  if (baseFile && baseFile.text !== f.text)
+    lineDiff(baseFile.text.split("\n"), f.text.split("\n"))
+      .filter((d) => d.t !== "-")
+      .forEach((d, k) => d.t === "+" && d.text.trim() && added.add(k));
   const dirs = {};
   for (const x of files) {
     const parts = x.path.split("/");
-    const dir = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
-    (dirs[dir] ||= []).push(x);
+    (dirs[parts.length > 1 ? parts.slice(0, -1).join("/") : ""] ||= []).push(x);
   }
   const tree = Object.keys(dirs)
     .sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)))
-    .map((d) => `${d ? `<div class="tree-row">${icon("folder", 14)}${esc(d)}</div>` : ""}${dirs[d].map((x) => `<button type="button" class="tree-row file ${x.path === ui.codeFile ? "on" : ""} ${firstBuildLevel() < 99 ? "appear" : ""}" data-action="code-file" data-path="${esc(x.path)}" style="padding-left:${d ? 28 : 8}px">${icon("file", 13)}<span>${esc(x.path.split("/").pop())}</span>${marks.get(x.path) ? `<span class="mark ${marks.get(x.path)}" title="${marks.get(x.path) === "A" ? "Added" : "Modified"} since the last commit">${marks.get(x.path)}</span>` : ""}</button>`).join("")}`)
+    .map((d) => `${d ? `<div class="tree-row">${icon("folder", 14)}${esc(d)}</div>` : ""}${dirs[d].map((x) => `<button type="button" class="tree-row file ${x.path === ui.codeFile && mode === "files" ? "on" : ""} ${building ? "appear" : ""}" data-action="code-file" data-path="${esc(x.path)}" style="padding-left:${d ? 28 : 8}px">${icon("file", 13)}<span>${esc(x.path.split("/").pop())}</span>${x.edited ? `<span title="Edited by you">${icon("pencil", 11)}</span>` : ""}${marks.get(x.path) ? `<span class="mark ${marks.get(x.path)}" title="${marks.get(x.path) === "A" ? "Added" : "Modified"} since ${esc(base.label)}">${marks.get(x.path)}</span>` : ""}</button>`).join("")}`)
     .join("");
   const ext = f.path.split(".").pop();
-  const cloneCmd = p.git.connected ? `git clone https://github.com/${p.git.repo}.git` : `npx architect pull ${slug(p.name)}`;
-  return `<div class="code-wrap"><nav class="tree" aria-label="Files"><div class="t-head"><span class="eyebrow">Files</span><span class="small muted">${files.length}</span></div>${tree}</nav>
-<div class="viewer"><div class="viewer-bar"><div class="crumbs">${f.path.split("/").map((x, k, arr) => (k === arr.length - 1 ? `<b>${esc(x)}</b>` : `${esc(x)}<span>/</span>`)).join("")}</div><div class="row" style="margin-left:auto">${p.git.connected ? `<span class="status hide-sm">${icon("branch", 13)}${esc(p.git.branch)} · ${p.git.committedRevision === p.revision ? "synced" : "not pushed"}</span>` : btn(`${icon("github", 14)}Save to GitHub`, "pop", "btn sm quiet", 'data-pop="github"')}${btn(`${icon("copy", 13)}Copy`, "copy-file", "btn sm")}${btn(`${icon("download", 13)}Download`, "download-zip", "btn sm")}</div></div>
-<pre class="code" aria-label="${esc(f.path)}"><code>${f.text.replace(/\n$/, "").split("\n").map((l, k) => `<span class="ln${added.has(k) ? " added" : ""}">${highlightLine(l, ext)}</span>`).join("")}</code></pre>
-<div class="code-foot"><span class="hide-sm">Run it yourself:</span>${btn("npm run dev", "copy-cmd", "cmd", 'data-cmd="npm run dev"')}${btn("npm test", "copy-cmd", "cmd", 'data-cmd="npm test"')}<span style="margin-left:auto" class="hide-sm"></span>${btn(esc(cloneCmd), "copy-cmd", "cmd hide-sm", `data-cmd="${esc(cloneCmd)}"`)}</div></div></div>`;
+  const sum = p.git.connected ? branchSummary(p) : null;
+  const older = p.versions.slice(0, -2).reverse().slice(0, 10);
+  const cmpSelect = `<label class="sr" for="cmp">Compare with</label><select id="cmp" data-change="cmp" class="model-select">${p.versions.length > 1 ? `<option value="prev" ${ui.cmp === "prev" ? "selected" : ""}>Previous version (v${p.versions.at(-2).n})</option>` : `<option value="prev">The start</option>`}${older.map((v) => `<option value="${v.id}" ${ui.cmp === v.id ? "selected" : ""}>Version ${v.n} · ${esc(v.label.slice(0, 36))}</option>`).join("")}${sum ? `<option value="main" ${ui.cmp === "main" ? "selected" : ""}>${esc(sum.base)} (pull request base)</option>` : ""}</select>`;
+  const synced = f.path === "architect.json" || f.path === dataPath(p);
+  const seg = `<div class="seg sm" role="tablist">${btn("Files", "code-mode", mode === "files" ? "on" : "", 'data-k="files" role="tab"')}${btn(`Changes${changes.length ? ` · ${changes.length}` : ""}`, "code-mode", mode === "changes" ? "on" : "", `data-k="changes" role="tab" ${building ? "disabled" : ""}`)}</div>`;
+  let bar, body;
+  if (mode === "changes") {
+    bar = `${seg}<span class="small muted" style="margin-left:6px">Compared with</span>${cmpSelect}<div class="row" style="margin-left:auto">${sum ? btn(`${icon("pr", 13)}${p.pr?.state === "open" ? `Pull request #${p.pr.number}` : "Open a pull request"}`, "pr", "btn sm") : ""}</div>`;
+    body = `<div class="diffs">${changes.length ? changes.map((d, i) => diffBlock(d.path, base.files.find((x) => x.path === d.path)?.text, files.find((x) => x.path === d.path)?.text, d.status, ui.focusPath ? d.path === ui.focusPath : i < 4)).join("") : `<div class="empty"><div class="display">No changes since ${esc(base.label)}</div><p>Pick an older version to compare with.</p></div>`}</div>`;
+  } else {
+    bar = `${seg}<div class="crumbs" style="margin-left:8px">${f.path.split("/").map((x, k, arr) => (k === arr.length - 1 ? `<b>${esc(x)}</b>` : `${esc(x)}<span>/</span>`)).join("")}</div><div class="row" style="margin-left:auto">${ui.editing ? `${btn("Cancel", "edit-cancel", "btn sm")}${btn("Save", "edit-save", "btn sm primary")}` : `${p.git.connected ? `<span class="status hide-sm">${icon("branch", 13)}${esc(p.git.branch)}</span>` : btn(`${icon("github", 14)}Save to GitHub`, "pop", "btn sm quiet", 'data-pop="github"')}${btn(`${icon("pencil", 13)}Edit`, "edit", "btn sm", building ? "disabled" : "")}${btn(`${icon("copy", 13)}Copy`, "copy-file", "btn sm")}${btn(`${icon("download", 13)}Download`, "download-zip", "btn sm")}`}</div>`;
+    body = ui.editing
+      ? `<div class="edit-wrap"><div class="edit-note ${ui.editError ? "bad" : ""}">${ui.editError ? `${icon("alert", 14)}${esc(ui.editError)}` : synced ? `${icon("info", 14)}Saving this file updates the app straight away.` : `${icon("info", 14)}Kept as your edit and included in the export and demo Git history. The preview runs from architect.json and the data file.`}</div><label class="sr" for="code-editor">Edit ${esc(f.path)}</label><textarea id="code-editor" class="editor" spellcheck="false">${esc(ui.editText)}</textarea></div>`
+      : `<pre class="code" aria-label="${esc(f.path)}"><code>${f.text.replace(/\n$/, "").split("\n").map((l, k) => `<span class="ln${added.has(k) ? " added" : ""}">${highlightLine(l, ext)}</span>`).join("")}</code></pre>`;
+  }
+  return `<div class="code-wrap"><nav class="tree" aria-label="Files"><div class="t-head"><span class="eyebrow">Files</span><span class="small muted">${files.length}</span></div>${tree}</nav><div class="viewer"><div class="viewer-bar">${bar}</div>${body}${building ? "" : termPanel()}</div></div>`;
+}
+
+// Terminal
+const hashOf = (id) => [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16).padStart(7, "0").slice(0, 7);
+function runCommand(raw) {
+  const cmd = raw.trim().replace(/\s+/g, " ");
+  if (!cmd) return;
+  const out = (t, c = "") => ui.term.push({ t, c });
+  ui.termOpen = true;
+  if (cmd === "clear") {
+    ui.term = [];
+    return render();
+  }
+  out(`$ ${cmd}`, "cmd");
+  if (cmd === "help") out("npm test · npm run dev · git status · git log · git branch · ls · clear", "dim");
+  else if (/^npm (test|t|run test)$/.test(cmd)) {
+    const r = runTests(p);
+    out(`> ${slug(p.name)}@0.1.0 test`, "dim");
+    for (const x of r.results) {
+      out(`${x.ok ? "✓" : "✗"} ${x.name} (${x.ms} ms)`, x.ok ? "ok" : "bad");
+      if (!x.ok) out(`    ${x.detail}`, "bad dim");
+    }
+    out(`${r.passed} passed${r.failed ? `, ${r.failed} failed` : ""}`, r.failed ? "bad" : "ok");
+    if (r.failed) ui.term.push({ html: btn(`${icon("wrench", 13)}Fix with Architect`, "fix-tests", "btn sm dark") });
+  } else if (/^npm (run )?(dev|start)$/.test(cmd)) {
+    const missing = envVars(p).filter((v) => v.status === "Not set");
+    out("> node server.mjs", "dim");
+    if (missing.length) {
+      out(`Error: ${missing[0].name} is not set.`, "bad");
+      out(`    ${A().agent.name} runs on ${p.settings.framework}, which needs ${missing.map((v) => v.name).join(" and ")}.`, "bad dim");
+      ui.term.push({ html: btn(`${icon("plus", 12)}Add ${missing[0].name}`, "add-env-name", "btn sm dark", `data-name="${missing[0].name}"`) });
+    } else {
+      out(`Demo setup complete for ${p.name}. No server was started.`, "ok");
+      out("Use Preview to try the app, or Download to run the exported project locally.", "dim");
+      out(`agents: ${[A().agent.name, ...(p.agents || []).map((x) => x.name)].join(", ")} · ${p.settings.framework}`, "dim");
+    }
+  } else if (cmd === "git status") {
+    if (!p.git.connected) out("fatal: not a git repository yet. Connect GitHub from the top bar.", "bad");
+    else {
+      const sum = branchSummary(p);
+      out(`On branch ${p.git.branch}`);
+      if (sum) out(`Your branch is ${plural(sum.versions.length, "commit")} ahead of ${sum.base}.`, "dim");
+      out(p.git.committedRevision >= p.revision ? "nothing to commit, working tree clean" : "Changes not committed yet. Commit and push from the GitHub menu.", p.git.committedRevision >= p.revision ? "dim" : "bad");
+    }
+  } else if (/^git log/.test(cmd)) {
+    if (!p.git.connected) out("fatal: not a git repository yet. Connect GitHub from the top bar.", "bad");
+    else for (const v of p.versions.slice(-8).reverse()) out(`${hashOf(v.id)} ${v.label}`);
+  } else if (cmd === "git branch") {
+    const base = p.git.base || "main";
+    out(`${p.git.branch === base ? "* " : "  "}${base}`);
+    if (p.git.branch !== base) out(`* ${p.git.branch}`, "ok");
+  } else if (cmd === "ls") out([...new Set(generateFiles(p).map((f) => f.path.split("/")[0] + (f.path.includes("/") ? "/" : "")))].sort().join("   "));
+  else out(`command not found: ${cmd.split(" ")[0]}. Try npm test, npm run dev, git status, git log or help.`, "bad");
+  if (ui.term.length > 240) ui.term.splice(0, ui.term.length - 240);
+  render();
+  const tb = document.querySelector("#term-body");
+  if (tb) tb.scrollTop = tb.scrollHeight;
+  document.querySelector("#term-input")?.focus({ preventScroll: true });
+}
+function fixTests() {
+  const report = runTests(p);
+  if (!report.failed) return toast("All tests pass.");
+  const first = report.results.find((r) => !r.ok);
+  const fixes = suggestFixes(p, report);
+  p.chat.push({ role: "user", text: `npm test: ${plural(report.failed, "test")} failed. Fix it.` });
+  p.chat.push({
+    role: "assistant",
+    kind: "clarify",
+    id: uid(),
+    text: `“${first.name}” fails. ${first.detail} ${fixes.length ? "Here’s what would fix it:" : "I couldn’t find an automatic fix; start from what changed."}`,
+    options: [...fixes.map((x) => ({ ...x, after: "tests" })), { label: "Show me what changed", open: "changes" }],
+  });
+  ui.mobile = "chat";
+  ui.stick = true;
+  save();
+  render();
 }
 
 // Agents
@@ -682,20 +824,25 @@ function historyPop() {
 function githubPop() {
   const g = p.git;
   if (!g.connected)
-    return `<div class="pop" role="dialog" aria-label="GitHub"><div><h2>Save every version to GitHub</h2><p class="sub">Architect commits each version to your repository, so the code is always yours.</p></div><form id="git-form" class="stack" style="gap:12px"><div class="field"><label class="field-label" for="git-repo">Repository</label><input id="git-repo" value="${esc(g.repo || `${slug(db.account?.name || "you")}/${slug(p.name)}`)}" pattern="[\\w.\\-]+/[\\w.\\-]+" required></div><div class="toggle-row" style="border:0;padding:0"><span>Private repository</span>${sw("noop", true, "Private repository")}</div><button class="btn primary" type="submit" ${ui.gitStep ? "disabled" : ""}>${ui.gitStep ? `${spinner(14)}Waiting for GitHub…` : `${icon("github", 16)}Connect GitHub`}</button></form><div class="pop-foot"><span>Already on GitHub?</span>${btn("Import a repository", "import", "link")}</div></div>`;
+    return `<div class="pop" role="dialog" aria-label="GitHub"><div><h2>Save every version to GitHub</h2><p class="sub">Try the GitHub flow with a sample repository. Commits and pushes stay in this browser.</p></div><form id="git-form" class="stack" style="gap:12px"><div class="field"><label class="field-label" for="git-repo">Repository</label><input id="git-repo" value="${esc(g.repo || `${slug(db.account?.name || "you")}/${slug(p.name)}`)}" pattern="[\\w.\\-]+/[\\w.\\-]+" required></div><div class="toggle-row" style="border:0;padding:0"><span>Private repository</span>${sw("noop", true, "Private repository")}</div><button class="btn primary" type="submit" ${ui.gitStep ? "disabled" : ""}>${ui.gitStep ? `${spinner(14)}Waiting for GitHub…` : `${icon("github", 16)}Connect GitHub`}</button></form><div class="pop-foot"><span>Already on GitHub?</span>${btn("Import a repository", "import", "link")}</div></div>`;
   const behind = g.committedRevision < p.revision;
   const n = p.versions.filter((v) => v.revision > g.committedRevision).length;
-  return `<div class="pop" role="dialog" aria-label="GitHub"><div class="row" style="gap:10px">${icon("github", 22)}<div class="grow"><strong style="font-size:15px">${esc(g.repo)}</strong><div class="row small muted">${icon("branch", 13)}<span>${esc(g.branch)}</span>${btn("Change", "branch", "link small")}</div></div></div>
-<div class="note-amber" style="background:${behind ? "var(--amber-soft)" : "var(--sage)"}">${behind ? icon("alert", 15) : icon("check", 15)}<span>${behind ? `${plural(n || 1, "version")} not pushed yet` : `Up to date${g.lastMessage ? ` · “${esc(g.lastMessage)}”` : ""}`}</span></div>
+  const sum = branchSummary(p);
+  const prOpen = p.pr?.state === "open";
+  const branchRow = sum
+    ? `<div class="note-amber" style="background:var(--mist)">${icon("branch", 15)}<span class="grow"><strong>${esc(g.branch)}</strong> · ${plural(sum.versions.length, "version")} ahead of ${esc(sum.base)}${prOpen ? ` · pull request #${p.pr.number} open` : ""}</span></div><div class="row wrap">${sum.versions.length ? btn(`${icon("pr", 13)}${prOpen ? "Review pull request" : "Open a pull request"}`, "pr", "btn primary sm") : `<span class="hint">Make a change and it lands on this branch.</span>`}${btn(`${icon("code", 13)}Compare with ${esc(sum.base)}`, "cmp-main", "btn sm")}</div>`
+    : `<div class="row wrap">${btn(`${icon("branch", 13)}Start a branch`, "branch", "btn sm")}${btn(`${icon("code", 13)}View changes`, "tab", "btn sm", 'data-tab="code"')}</div>`;
+  return `<div class="pop" role="dialog" aria-label="GitHub"><div class="row" style="gap:10px">${icon("github", 22)}<div class="grow"><strong style="font-size:15px">${esc(g.repo)}</strong><div class="row small muted">${icon("branch", 13)}<span>${esc(g.branch)}</span></div></div></div>
+<div class="note-amber" style="background:${behind ? "var(--amber-soft)" : "var(--sage)"}">${behind ? icon("alert", 15) : icon("check", 15)}<span class="grow">${behind ? `${plural(n || 1, "version")} not pushed yet` : `Pushed${g.lastMessage ? ` · “${esc(g.lastMessage)}”` : ""}`}</span>${behind ? btn("Commit and push", "commit-push", "btn sm primary") : ""}</div>
+${branchRow}
 <div class="toggle-row"><span>Commit every version automatically<small>Turn off to review and push yourself.</small></span>${sw("git-auto", g.auto !== false, "Commit every version automatically")}</div>
-<div class="row wrap">${behind ? btn("Commit and push", "commit-push", "btn primary sm") : ""}${btn("Open a pull request", "open-pr", "btn sm")}${btn(`${icon("code", 13)}View changes`, "tab", "btn sm", 'data-tab="code"')}</div>
 <div class="field"><span class="field-label">Clone</span>${btn(`git clone https://github.com/${esc(g.repo)}.git`, "copy-cmd", "cmd", `data-cmd="git clone https://github.com/${esc(g.repo)}.git" style="text-align:left;padding:8px 10px"`)}</div>
-<div class="pop-foot"><span>${g.lastCommit ? `Last commit <code>${esc(g.lastCommit)}</code>` : "No commits yet"}</span>${btn("Disconnect", "git-disconnect", "link")}</div></div>`;
+<p class="hint">Demo connection · no repositories are created or changed on GitHub.</p><div class="pop-foot"><span>${g.lastCommit ? `Last commit <code>${esc(g.lastCommit)}</code>` : "No commits yet"}</span>${btn("Disconnect", "git-disconnect", "link")}</div></div>`;
 }
 function sharePop() {
   const me = { email: db.account?.email || "aman@demo.architect", role: "Owner", name: db.account?.name || "Aman" };
   const members = [me, ...(p.members || []).filter((m) => m.role !== "Owner")];
-  return `<div class="pop" role="dialog" aria-label="Share"><div><h2>Share ${esc(p.name)}</h2><p class="sub">Invite people to build with you, or send the preview.</p></div><form id="invite-form" class="row"><label class="sr" for="invite-email">Email</label><input id="invite-email" type="email" required placeholder="name@company.com"><label class="sr" for="invite-role">Role</label><select id="invite-role" style="width:auto"><option>Can edit</option><option>Can view</option></select><button class="btn primary sm" type="submit">Invite</button></form><div>${members.map((m) => `<div class="listrow"><div class="row" style="gap:10px"><span class="avatar sm">${esc((m.name || m.email).slice(0, 2).toUpperCase())}</span><div><strong style="font-size:13.5px">${esc(m.name || m.email)}</strong><p>${esc(m.email)}${m.status ? ` · ${esc(m.status)}` : ""}</p></div></div><span class="small muted">${esc(m.role)}</span></div>`).join("")}</div><div class="pop-foot"><span>${icon("link", 13)} Preview link</span>${btn(`${icon("copy", 13)}Copy link`, "copy-preview", "btn sm")}</div></div>`;
+  return `<div class="pop" role="dialog" aria-label="Share"><div><h2>Share ${esc(p.name)}</h2><p class="sub">Try reviewer and editor roles. Invitations are simulated; preview links open in this browser only.</p></div><form id="invite-form" class="row"><label class="sr" for="invite-email">Email</label><input id="invite-email" type="email" required placeholder="name@company.com"><label class="sr" for="invite-role">Role</label><select id="invite-role" style="width:auto"><option>Can edit</option><option>Can view</option></select><button class="btn primary sm" type="submit">Invite</button></form><div>${members.map((m) => `<div class="listrow"><div class="row" style="gap:10px"><span class="avatar sm">${esc((m.name || m.email).slice(0, 2).toUpperCase())}</span><div><strong style="font-size:13.5px">${esc(m.name || m.email)}</strong><p>${esc(m.email)}${m.status ? ` · ${esc(m.status)}` : ""}</p></div></div><span class="small muted">${esc(m.role)}</span></div>`).join("")}</div><div class="pop-foot"><span>${icon("link", 13)} Preview link</span>${btn(`${icon("copy", 13)}Copy link`, "copy-preview", "btn sm")}</div></div>`;
 }
 function publishPop() {
   const latest = p.releases.at(-1);
@@ -705,19 +852,21 @@ function publishPop() {
     return `<div class="pop" role="dialog" aria-label="Publishing"><div class="row between"><h2>Publishing</h2><span class="small muted">${ui.pubStep + 1} of 3</span></div><div class="progress"><i style="width:${Math.round(((ui.pubStep + 0.5) / 3) * 100)}%"></i></div><div class="steps">${steps.map((s, k) => (k < ui.pubStep ? `<div class="step">${icon("check", 14, "add")}<span>${esc(s)}</span></div>` : k === ui.pubStep ? `<div class="step current">${spinner(14)}<span>${esc(s)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(s)}</span></div>`)).join("")}</div></div>`;
   }
   if (ui.pubStep === "live" && latest) {
-    return `<div class="pop" role="dialog" aria-label="Live"><div class="live-art">${horizon(true)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:30px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}${btn(icon("qr", 16), "qr", "icon-btn", 'aria-label="Show QR code" style="border:1px solid var(--line-2);width:36px;height:36px"')}</div>${releasesList()}</div>`;
+    return `<div class="pop" role="dialog" aria-label="Live"><div class="live-art">${horizon(true)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:30px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}</div><p class="hint">Demo release · Open app and Copy use a link in this browser. The address above illustrates a production domain.</p>${releasesList()}</div>`;
   }
-  const checks = runChecks(p);
+  const tests = runTests(p);
+  const sum = p.git.connected ? branchSummary(p) : null;
+  const gated = sum && sum.versions.length;
   const env = envVars(p).filter((v) => v.status === "Not set");
   const reading = (p.tools || ["read_source"]).includes("read_source");
   const since = latest ? p.versions.filter((v) => v.revision > latest.revision).length : 0;
   const upToDate = latest && latest.revision === p.revision;
   return `<div class="pop" role="dialog" aria-label="Publish"><div><h2>Publish ${esc(p.name)}</h2><p class="sub">${latest ? (upToDate ? `Release ${latest.number} is live and up to date.` : `Version ${p.versions.at(-1).n} · ${plural(since, "change")} since release ${latest.number}`) : `Version ${p.versions.at(-1).n} · first release`}</p></div>
-<div class="field"><span class="field-label">Address</span><div class="addr"><span class="grow">${esc(slug(p.name))}<span class="muted">.architect.app</span></span>${p.customDomain ? `<span class="status ${p.customDomain.status === "verified" ? "live" : ""}" style="background:var(--sage);border-radius:8px;padding:4px 8px"><span class="dot ${p.customDomain.status === "verified" ? "live" : "amber"}"></span>${esc(p.customDomain.name)}</span>` : btn("Add a domain", "domain", "btn sm quiet")}</div></div>
+<div class="field"><span class="field-label">Example production address${p.imported ? ` <span class="muted" style="font-weight:400">· illustrates the imported Vercel destination</span>` : ""}</span><div class="addr"><span class="grow">${esc(slug(p.name))}<span class="muted">.architect.app</span></span>${p.customDomain ? `<span class="status ${p.customDomain.status === "verified" ? "live" : ""}" style="background:var(--sage);border-radius:8px;padding:4px 8px"><span class="dot ${p.customDomain.status === "verified" ? "live" : "amber"}"></span>${esc(p.customDomain.name)}</span>` : btn("Add a domain", "domain", "btn sm quiet")}</div></div>
 <div class="field"><span class="field-label">Who can open it</span><div class="seg block" role="group">${[["public", "Anyone with the link"], ["team", p.settings.signin ? `${p.settings.signin} sign-in` : "Signed-in people"]].map(([v, l]) => `<button type="button" data-action="set" data-key="audience" data-val="${v}" class="${p.settings.audience === v ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
-<div class="field"><span class="field-label">Before it goes live</span><div class="checks"><div>${icon(p.stage === "built" ? "check" : "alert", 14, p.stage === "built" ? "add" : "del")}${p.stage === "built" ? "The app builds" : "Finish building first"}</div><div>${icon(checks.passed === checks.total ? "check" : "alert", 14, checks.passed === checks.total ? "add" : "del")}Sample questions: ${checks.passed} of ${checks.total} behave</div><div>${icon(reading ? "check" : "alert", 14, reading ? "add" : "del")}${reading ? `${esc(A().agent.name)} can read ${esc(p.sourceName)}` : "Source reading is off in Tools"}</div>${env.length ? `<div class="note-amber">${icon("alert", 15)}<span class="grow"><code>${esc(env.map((v) => v.name).join(", "))}</code> not set</span>${btn("Add", "settings", "btn sm")}</div>` : ""}</div></div>
-<button type="button" class="btn primary big arrow" data-action="release" ${p.stage !== "built" || build?.pid === p.id || upToDate ? "disabled" : ""}>${upToDate ? "Up to date" : latest ? `Publish version ${p.versions.at(-1).n}` : "Publish"}<span class="disc">${icon("arrow", 15)}</span></button>
-${p.releases.length ? releasesList() : ""}</div>`;
+<div class="field"><span class="field-label">Before it goes live</span><div class="checks"><div>${icon(p.stage === "built" ? "check" : "alert", 14, p.stage === "built" ? "add" : "del")}${p.stage === "built" ? "The app builds" : "Finish building first"}</div><div>${icon(tests.failed ? "alert" : "check", 14, tests.failed ? "del" : "add")}<span class="grow">Tests: ${tests.passed} of ${tests.total} pass</span>${tests.failed ? btn(`${icon("wrench", 12)}Fix`, "fix-tests", "btn sm") : ""}</div><div>${icon(reading ? "check" : "alert", 14, reading ? "add" : "del")}${reading ? `${esc(A().agent.name)} can read ${esc(p.sourceName)}` : "Source reading is off in Tools"}</div>${env.length ? `<div class="note-amber">${icon("alert", 15)}<span class="grow"><code>${esc(env.map((v) => v.name).join(", "))}</code> not set</span>${btn("Add", "settings", "btn sm")}</div>` : ""}${gated ? `<div class="note-amber" style="background:var(--mist)">${icon("branch", 15)}<span class="grow">You’re on <strong>${esc(p.git.branch)}</strong>. Production deploys from ${esc(sum.base)}.</span>${btn(p.pr?.state === "open" ? "Review PR" : "Open PR", "pr", "btn sm")}</div>` : ""}</div></div>
+<button type="button" class="btn primary big arrow" data-action="release" ${p.stage !== "built" || build?.pid === p.id || upToDate || gated || tests.failed ? "disabled" : ""}>${gated ? `Merge into ${esc(sum.base)} to publish` : tests.failed ? "Fix the failing tests to publish" : upToDate ? "Up to date" : latest ? `Publish version ${p.versions.at(-1).n}` : "Publish"}<span class="disc">${icon("arrow", 15)}</span></button>
+<p class="hint">Publishing saves a demo release in this browser. It does not create an external deployment.</p>${p.releases.length ? releasesList() : ""}</div>`;
 }
 function releasesList() {
   const latest = p.releases.at(-1);
@@ -751,7 +900,7 @@ function sharedView() {
   const th = THEMES[target.settings.theme] || THEMES.forest;
   document.body.style.background = th.bg;
   if (releaseId && target.settings.audience === "team" && !sessionStorage.getItem("recipient-" + target.id)) {
-    app.innerHTML = `<div class="appview ${th.dark ? "dark" : ""}" style="${themeVars(th)};min-height:100vh"><div class="gate"><span class="a-mark" style="width:44px;height:44px;border-radius:12px;font-size:20px">${esc(target.name[0])}</span><h1 class="a-h" style="font-family:Georgia,serif;font-weight:400;font-size:34px">${esc(target.name)}</h1><p style="color:var(--a-muted)">Sign in to continue.</p><button type="button" class="a-btn" data-action="recipient-login" style="padding:12px 22px">${target.settings.signin === "Google" ? "Continue with Google" : target.settings.signin ? `Continue with ${esc(target.settings.signin)}` : "Continue with your work account"}</button></div></div>${badge}`;
+    app.innerHTML = `<div class="appview ${th.dark ? "dark" : ""}" style="${themeVars(th)};min-height:100vh"><div class="gate"><span class="a-mark" style="width:44px;height:44px;border-radius:12px;font-size:20px">${esc(target.name[0])}</span><h1 class="a-h" style="font-family:Georgia,serif;font-weight:400;font-size:34px">${esc(target.name)}</h1><p style="color:var(--a-muted)">Demo sign-in to continue. No account is connected.</p><button type="button" class="a-btn" data-action="recipient-login" style="padding:12px 22px">${target.settings.signin === "Google" ? "Continue with Google" : target.settings.signin ? `Continue with ${esc(target.settings.signin)}` : "Continue with your work account"}</button></div></div>${badge}`;
     return;
   }
   document.title = target.name;
@@ -764,12 +913,14 @@ function setHash() {
   else history.replaceState(null, "", location.pathname + location.search);
 }
 function resetWorkspaceUi() {
+  Object.assign(ui, { codeMode: "files", cmp: "prev", focusPath: "", editing: false, editText: "", editError: "", term: [], termOpen: true });
   Object.assign(ui, { tab: "preview", pop: null, selecting: false, sel: "", page: "home", console: false, mode: "build", mobile: "chat", mention: false, codeFile: "", agentSel: "main", agentTab: "behavior", testResult: null, q: "", result: null, showSource: false, fb: "", pubStep: null, stick: true });
 }
 function openProject(id, tab = "preview") {
   p = byId(id);
   if (!p) return;
   resetWorkspaceUi();
+  if (p.git.connected && branchSummary(p)) ui.cmp = "main";
   ui.view = "workspace";
   ui.tab = tab;
   if (p.chat.length === 0) p.chat.push({ role: "assistant", kind: "text", text: `Welcome back to ${p.name}. Ask for a change, or select something in the preview.` });
@@ -798,9 +949,9 @@ function signinDialog() {
   const sub = idea ? "Your idea is saved. The build starts as soon as you’re in." : "Build apps and agents by describing them.";
   let body;
   if (auth.step === "sent")
-    body = `<div class="quote">We sent a sign-in link to <strong>${esc(auth.email)}</strong>. Open it on this device, or enter the code from the email.</div><form id="code-form" class="stack"><div class="field"><label class="field-label" for="code">Code</label><input id="code" value="ARCHITECT" autocomplete="one-time-code"></div><button class="btn primary big" type="submit">Continue</button></form><button type="button" class="link" data-action="auth-back" style="align-self:center">Use another way to sign in</button>`;
+    body = `<div class="quote">Demo sign-in for <strong>${esc(auth.email)}</strong>. No email was sent. Use the prefilled code to continue.</div><form id="code-form" class="stack"><div class="field"><label class="field-label" for="code">Code</label><input id="code" value="ARCHITECT" autocomplete="one-time-code"></div><button class="btn primary big" type="submit">Continue</button></form><button type="button" class="link" data-action="auth-back" style="align-self:center">Use another way to sign in</button>`;
   else
-    body = `${idea ? `<div class="quote"><span class="eyebrow" style="display:block;margin-bottom:6px">Your idea</span>${esc(idea.length > 220 ? idea.slice(0, 220) + "…" : idea)}</div>` : ""}<div class="stack">${btn(auth.busy === "Google" ? `${spinner(16)}Connecting to Google…` : `${googleLogo}Continue with Google`, "auth-provider", "provider", `data-provider="Google" autofocus ${auth.busy ? "disabled" : ""}`)}${btn(auth.busy === "GitHub" ? `${spinner(16)}Connecting to GitHub…` : `${icon("github", 18)}Continue with GitHub`, "auth-provider", "provider", `data-provider="GitHub" ${auth.busy ? "disabled" : ""}`)}</div><div class="or">or with work email</div><form id="email-form" class="stack"><label class="sr" for="email">Work email</label><input id="email" type="email" required placeholder="you@company.com" value="${esc(auth.email)}" style="height:48px"><button class="btn primary big" type="submit">Email me a sign-in link</button></form><p class="small muted" style="text-align:center">By continuing you agree to the Terms and Privacy Policy.</p><button type="button" class="link" data-action="auth-demo" style="align-self:center">Look around a demo workspace instead</button>`;
+    body = `${idea ? `<div class="quote"><span class="eyebrow" style="display:block;margin-bottom:6px">Your idea</span>${esc(idea.length > 220 ? idea.slice(0, 220) + "…" : idea)}</div>` : ""}<div class="stack">${btn(auth.busy === "Google" ? `${spinner(16)}Connecting to Google…` : `${googleLogo}Continue with Google`, "auth-provider", "provider", `data-provider="Google" autofocus ${auth.busy ? "disabled" : ""}`)}${btn(auth.busy === "GitHub" ? `${spinner(16)}Connecting to GitHub…` : `${icon("github", 18)}Continue with GitHub`, "auth-provider", "provider", `data-provider="GitHub" ${auth.busy ? "disabled" : ""}`)}</div><div class="or">or with work email</div><form id="email-form" class="stack"><label class="sr" for="email">Work email</label><input id="email" type="email" required placeholder="you@company.com" value="${esc(auth.email)}" style="height:48px"><button class="btn primary big" type="submit">Email me a sign-in link</button></form><p class="small muted" style="text-align:center">Demo sign-in · no provider account is connected and no email is sent.</p><button type="button" class="link" data-action="auth-demo" style="align-self:center">Look around a demo workspace instead</button>`;
   dialog(title, sub, body, "", { logo: true });
 }
 function finishSignIn(method, email) {
@@ -813,7 +964,10 @@ function finishSignIn(method, email) {
   pending = null;
   toast(`Signed in with ${method}.`);
   if (next?.type === "build") return startProject(next.brief, next.opts);
-  if (next?.type === "import") return act.import();
+  if (next?.type === "import") {
+    render();
+    return act.import();
+  }
   render();
 }
 
@@ -918,7 +1072,7 @@ function autoCommit(x, label) {
   x.git.lastMessage = label;
   x.git.lastCommit = uid().slice(0, 7);
 }
-function runChange(ops, intro) {
+function runChange(ops, intro, opts = {}) {
   if (build) return toast("Wait for the current change to finish.");
   const dry = clone(p);
   const { files } = applyOps(dry, ops);
@@ -940,6 +1094,7 @@ function runChange(ops, intro) {
       const page = ops.find((o) => o.type === "page");
       if (page) ui.page = page.page.id;
       if (ops.some((o) => o.type === "removePage" && o.id === ui.page)) ui.page = "home";
+      if (opts.after === "tests") setTimeout(() => runCommand("npm test"), 0);
     }
   });
 }
@@ -1096,12 +1251,28 @@ async function copy(text, done) {
 // Import
 function importDialog() {
   const f = importFlow;
-  if (f.step === "pick")
+  if (f.step === "pick") {
+    const q = ui.repoQuery.toLowerCase();
+    const list = REPOS.filter((r) => !q || r.repo.includes(q) || r.desc.toLowerCase().includes(q));
     return dialog(
       "Import from GitHub",
-      "Architect reads the repository first. Nothing is written until you ask for a change.",
-      `<label class="sr" for="repo-search">Search repositories</label><input id="repo-search" placeholder="Search your repositories" value="northstar"><div class="stack">${[["northstar/support-app", "React · LangGraph · team sign-in · updated 3 days ago"]].map(([r, d]) => `<button type="button" class="choice ${f.repo === r ? "on" : ""}" data-action="import-repo" data-repo="${r}">${icon("github", 20)}<span class="grow"><b>${r}</b><small>${d}</small></span>${f.repo === r ? icon("check", 16) : ""}</button>`).join("")}</div><div class="field"><label class="field-label" for="import-branch">Branch</label><select id="import-branch"><option>main</option><option ${f.branch === "feature/citations" ? "selected" : ""}>feature/citations</option></select></div>`,
+      "These sample repositories demonstrate inspection, setup and branch review. No GitHub access is requested.",
+      `<label class="sr" for="repo-search">Search repositories</label><input id="repo-search" placeholder="Search your repositories" value="${esc(ui.repoQuery)}" autocomplete="off"><div class="stack">${list.map((r) => `<button type="button" class="choice ${f.repo === r.repo ? "on" : ""}" data-action="import-repo" data-repo="${r.repo}">${icon(r.kind === "access" ? "lock" : "github", 20)}<span class="grow"><b>${r.repo}</b><small>${esc(r.desc)}${r.updated ? ` · updated ${r.updated}` : ""}</small></span>${f.repo === r.repo ? icon("check", 16) : r.kind === "unsupported" ? `<span class="small muted">Can’t edit yet</span>` : r.kind === "access" ? `<span class="small muted">Needs approval</span>` : ""}</button>`).join("") || `<p class="hint">No repositories match “${esc(ui.repoQuery)}”.</p>`}</div><div class="field"><label class="field-label" for="import-branch">Branch to start from</label><select id="import-branch"><option>main</option><option ${f.branch === "develop" ? "selected" : ""}>develop</option></select></div>`,
       `${btn("Grant access to more repositories", "import-more", "btn quiet")}${btn("Read this repository", "import-scan", "btn primary", f.repo ? "" : "disabled")}`,
+    );
+  }
+  if (f.step === "unsupported")
+    return dialog(
+      "Architect can’t edit this one yet",
+      `${esc(f.repo)} is a Ruby on Rails app. Architect edits JavaScript, TypeScript and Python projects, so it can’t change this code or run it in the preview.`,
+      `<div class="stack">${btn(`${icon("bot", 20)}<span class="grow"><b>Build an agent app that uses it</b><small>A new app whose agent calls this project’s API as a tool</small></span>${icon("right", 16)}`, "import-around", "choice")}${btn(`${icon("left", 20)}<span class="grow"><b>Pick another repository</b><small>JavaScript, TypeScript or Python</small></span>`, "import-github", "choice")}</div>`,
+    );
+  if (f.step === "access")
+    return dialog(
+      "This repository needs approval",
+      `${esc(f.repo)} belongs to the acme organization. An owner has to approve Architect before it can read the code.`,
+      `<div class="quote">Architect asks for read access to the repositories you choose, and write access only to branches it creates.</div>`,
+      `${btn("Back", "import-github")}${btn("Ask an acme owner", "import-ask", "btn primary")}`,
     );
   if (f.step === "zip")
     return dialog("Upload a project", "A ZIP of your codebase. Architect reads the frameworks, start commands and sign-in before changing anything.", `<label class="choice" style="cursor:pointer;justify-content:center;padding:26px;border-style:dashed">${icon("upload", 20)}<span><b>Choose a .zip</b><small>Or drop it here</small></span><input id="zip-file" type="file" accept=".zip,application/zip" class="sr"></label>`);
@@ -1113,17 +1284,18 @@ function importDialog() {
       ["Sign-in", "Clerk, team accounts"],
       ["Data", "docs/handbook.md"],
       ["Hosting", "Vercel, production"],
+      ["Setup", "Needs OPENAI_API_KEY and LANGCHAIN_API_KEY to run. The preview uses sample values until you add them."],
     ];
     return dialog(
       f.scanStep >= lines.length ? "What we found" : "Reading your project…",
-      f.scanStep >= lines.length ? "We keep your framework, sign-in, data and hosting. Changes go to a branch you review." : "",
-      `<div class="steps" style="font-size:14px">${lines.map(([t, d], k) => (k < f.scanStep ? `<div class="step">${icon("check", 15, "add")}<span><b style="font-weight:600">${esc(t)}</b> · ${esc(d)}</span></div>` : k === f.scanStep ? `<div class="step current">${spinner(15)}<span>${esc(t)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(t)}</span></div>`)).join("")}</div>${f.scanStep >= lines.length ? `<div class="stack" style="gap:8px"><span class="field-label" style="margin:0">What would you like to do first?</span><div class="row wrap">${btn("Show sources under answers", "import-go", "chip", 'data-change="citations"')}${btn("Shorter answers", "import-go", "chip", 'data-change="length"')}${btn("Just look around", "import-go", "chip", 'data-change=""')}</div></div>` : ""}`,
+      f.scanStep >= lines.length ? `We keep your framework, sign-in, data and hosting. Changes go to the branch architect/first-change, and ${esc(f.branch || "main")} stays as it is until you merge.` : "",
+      `<div class="steps" style="font-size:14px">${lines.map(([t, d], k) => (k < f.scanStep ? `<div class="step">${t === "Setup" ? icon("alert", 15, "del") : icon("check", 15, "add")}<span><b style="font-weight:600">${esc(t)}</b> · ${esc(d)}</span></div>` : k === f.scanStep ? `<div class="step current">${spinner(15)}<span>${esc(t)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(t)}</span></div>`)).join("")}</div>${f.scanStep >= lines.length ? `<div class="stack" style="gap:8px"><span class="field-label" style="margin:0">What would you like to do first?</span><div class="row wrap">${btn("Show sources under answers", "import-go", "chip", 'data-change="citations"')}${btn("Shorter answers", "import-go", "chip", 'data-change="length"')}${btn("Just look around", "import-go", "chip", 'data-change=""')}</div></div>` : ""}`,
       f.scanStep >= lines.length ? arrowBtn("Open in workspace", "import-go", "", 'data-change=""') : "",
     );
   }
   return dialog(
     "Bring a project into Architect",
-    "Keep working on something you already built. Architect reads it first and changes nothing until you ask.",
+    "Explore importing a prepared example, including setup and review. Repository and ZIP inspection are simulated.",
     `<div class="stack">${btn(`${icon("github", 22)}<span class="grow"><b>From GitHub</b><small>Pick a repository and branch</small></span>${icon("right", 16)}`, "import-github", "choice")}${btn(`${icon("upload", 22)}<span class="grow"><b>Upload a ZIP</b><small>A folder with your code</small></span>${icon("right", 16)}`, "import-zip-step", "choice")}${btn(`${icon("grid", 22)}<span class="grow"><b>Try the example</b><small>Northstar Support: React, team sign-in and a LangGraph agent</small></span>${icon("right", 16)}`, "import-sample", "choice")}</div>`,
   );
 }
@@ -1135,7 +1307,7 @@ function runImportScan() {
   importFlow.timer = setInterval(() => {
     if (!importFlow || !modal.open) return clearInterval(importFlow?.timer);
     importFlow.scanStep++;
-    if (importFlow.scanStep >= 6) clearInterval(importFlow.timer);
+    if (importFlow.scanStep >= 7) clearInterval(importFlow.timer);
     importDialog();
   }, 420);
 }
@@ -1146,14 +1318,18 @@ function createImported(change) {
   x.settings.citations = false;
   x.importedAt = new Date().toISOString();
   x.git = { ...x.git, repo: importFlow?.repo || "northstar/support-app", branch: importFlow?.branch || "main", connected: true, committedRevision: 1, syncedRevision: 1, auto: true, lastMessage: "Imported into Architect", lastCommit: uid().slice(0, 7) };
+  x.git.branch = importFlow?.branch || "main";
+  x.git.base = x.git.branch;
   x.versions = [];
   checkpoint(x, "Imported from GitHub");
-  x.chat.push({ role: "assistant", kind: "text", text: `Imported ${x.git.repo}. It’s a React app with team sign-in and a LangGraph agent; all three stay as they are. The preview runs your current version.` });
+  startBranch(x, "architect/first-change");
+  x.chat.push({ role: "assistant", kind: "text", text: `Imported ${x.git.repo}. It’s a React app with team sign-in and a LangGraph agent; all three stay as they are. Changes go to the branch architect/first-change, and ${x.git.base} stays as it is until you merge. To run it outside the preview it needs OPENAI_API_KEY and LANGCHAIN_API_KEY: try Start app in Code.` });
   db.projects.unshift(x);
   save();
   closeModal();
   p = x;
   resetWorkspaceUi();
+  ui.cmp = "main";
   ui.view = "workspace";
   setHash();
   render();
@@ -1210,7 +1386,7 @@ const act = {
     dialog(
       "What’s real in this prototype",
       "Architect 2.0 is a working prototype. Everything runs in your browser; a few services are stand-ins.",
-      `<div class="two"><div class="card tint-sage"><h3>Real</h3><ul class="trace" style="margin-top:8px"><li>Any prompt becomes a project with pages, agents, data and sample content in its subject</li><li>Chat changes the app, its agent and its code, with every version restorable</li><li>Answers, routing and number questions over your own text</li><li>Generated source as a runnable project and a real ZIP</li><li>Runs with traces, releases with rollback, and a working link for each release</li></ul></div><div class="card tint-sand"><h3>Stand-ins</h3><ul class="trace" style="margin-top:8px"><li>Sign-in providers and email links</li><li>Language models: matching is deterministic</li><li>GitHub, repository import and hosting</li><li>Other agent frameworks: files are written, not run</li></ul><p class="hint" style="margin-top:10px">Projects and releases live in this browser’s storage.</p></div></div>`,
+      `<div class="two"><div class="card tint-sage"><h3>Real</h3><ul class="trace" style="margin-top:8px"><li>Any prompt becomes a project with pages, agents, data and sample content in its subject</li><li>Chat changes the app, its agent and its code, with every version restorable</li><li>Answers, routing and number questions over your own text</li><li>Generated source as a runnable project and a real ZIP</li><li>Runs with traces, releases with rollback, and a working link for each release</li></ul></div><div class="card tint-sand"><h3>Stand-ins</h3><ul class="trace" style="margin-top:8px"><li>Sign-in providers and email links</li><li>Language models: matching is deterministic</li><li>GitHub, repository import, terminal processes and hosting</li><li>Other agent frameworks: files are written, not run</li></ul><p class="hint" style="margin-top:10px">Projects and releases live in this browser’s storage.</p></div></div>`,
       "",
       { wide: true },
     );
@@ -1218,7 +1394,7 @@ const act = {
   usage: () => {
     ui.pop = null;
     const n = db.projects.length;
-    dialog("Usage", "This month, across your workspace.", `<div class="two"><div class="card tint-sand"><span class="eyebrow">Credits left</span><div class="display" style="font-size:40px;margin-top:6px">1,240</div><p class="hint">of 2,000 on the Team plan</p></div><div class="card tint-mist"><span class="eyebrow">Projects</span><div class="display" style="font-size:40px;margin-top:6px">${n}</div><p class="hint">${plural(db.projects.reduce((s, x) => s + (x.runs || []).length, 0), "agent run")} recorded</p></div></div>`);
+    dialog("Usage", "Illustrative credits alongside projects and runs saved in this browser.", `<div class="two"><div class="card tint-sand"><span class="eyebrow">Credits left</span><div class="display" style="font-size:40px;margin-top:6px">1,240</div><p class="hint">of 2,000 on the Team plan</p></div><div class="card tint-mist"><span class="eyebrow">Projects</span><div class="display" style="font-size:40px;margin-top:6px">${n}</div><p class="hint">${plural(db.projects.reduce((s, x) => s + (x.runs || []).length, 0), "agent run")} recorded</p></div></div>`);
   },
   "reset-demo": () => {
     ui.pop = null;
@@ -1299,6 +1475,7 @@ const act = {
   "import-github": () => {
     importFlow.step = "pick";
     importFlow.repo = "northstar/support-app";
+    ui.repoQuery = "";
     importDialog();
   },
   "import-zip-step": () => {
@@ -1306,8 +1483,23 @@ const act = {
     importDialog();
   },
   "import-repo": (el) => {
-    importFlow.repo = el.dataset.repo;
+    const r = REPOS.find((x) => x.repo === el.dataset.repo);
+    importFlow.repo = r.repo;
+    if (r.kind !== "ok") importFlow.step = r.kind;
     importDialog();
+    if (r.kind !== "ok") importFlow.repo = "";
+  },
+  "import-ask": () => {
+    closeModal();
+    toast("Demo request recorded. No message was sent to the organization.");
+  },
+  "import-around": () => {
+    closeModal();
+    brief = "An assistant for our ops team that answers questions using the northstar/rails-admin API, and hands anything it can’t answer to a person on Slack.";
+    sessionStorage.setItem("architect-draft-brief", brief);
+    if (ui.view !== "home") goHome();
+    else render();
+    document.querySelector("#brief")?.focus();
   },
   "import-more": () => toast("GitHub would open here to grant access to more repositories."),
   "import-scan": () => {
@@ -1406,6 +1598,12 @@ const act = {
     const m = p.chat.find((x) => x.id === el.dataset.id);
     const o = m.options[+el.dataset.k];
     m.chosen = +el.dataset.k;
+    if (o.open === "changes") {
+      Object.assign(ui, { tab: "code", codeMode: "changes", cmp: "prev", focusPath: "", mobile: "app" });
+      save();
+      setHash();
+      return render();
+    }
     if (o.plan) {
       ui.mode = "plan";
       p.chat.push({ role: "assistant", kind: "text", text: "Tell me more: where should it live, and what should people see or be able to do? I’ll lay out the steps before building." });
@@ -1414,7 +1612,7 @@ const act = {
       return document.querySelector("#chat-input")?.focus();
     }
     save();
-    runChange(o.ops);
+    runChange(o.ops, undefined, { after: o.after });
   },
   "proposal-build": (el) => {
     const m = p.chat.find((x) => x.id === el.dataset.id);
@@ -1503,7 +1701,109 @@ const act = {
   // Code
   "code-file": (el) => {
     ui.codeFile = el.dataset.path;
+    if (el.dataset.mode) ui.codeMode = el.dataset.mode;
+    if (ui.codeMode === "changes") {
+      ui.focusPath = el.dataset.path;
+      render();
+      return document.getElementById(`diff-${slug(el.dataset.path)}`)?.scrollIntoView({ block: "start" });
+    }
+    ui.editing = false;
     render();
+  },
+  "code-mode": (el) => {
+    ui.codeMode = el.dataset.k;
+    ui.focusPath = "";
+    ui.editing = false;
+    render();
+  },
+  "open-diff": (el) => {
+    const k = p.versions.findIndex((v) => v.id === el.dataset.v);
+    Object.assign(ui, { tab: "code", codeMode: "changes", focusPath: el.dataset.path || "", mobile: "app", editing: false });
+    ui.cmp = k > 0 ? p.versions[k - 1].id : k === 0 ? "none" : "prev";
+    if (k === p.versions.length - 1) ui.cmp = "prev";
+    setHash();
+    render();
+    if (el.dataset.path) document.getElementById(`diff-${slug(el.dataset.path)}`)?.scrollIntoView({ block: "start" });
+  },
+  edit: () => {
+    const f = generateFiles(p).find((x) => x.path === ui.codeFile);
+    Object.assign(ui, { editing: true, editText: f.text, editError: "" });
+    render();
+    document.querySelector("#code-editor")?.focus();
+  },
+  "edit-cancel": () => {
+    Object.assign(ui, { editing: false, editText: "", editError: "" });
+    render();
+  },
+  "edit-save": () => {
+    const path = ui.codeFile;
+    const text = document.querySelector("#code-editor")?.value ?? ui.editText;
+    const before = generateFiles(p).find((x) => x.path === path);
+    if (before && before.text === text) {
+      Object.assign(ui, { editing: false, editError: "" });
+      render();
+      return toast("No changes to save.");
+    }
+    const res = editFile(p, path, text);
+    if (res.error) {
+      ui.editError = res.error;
+      ui.editText = text;
+      return render();
+    }
+    if (!res.ops.length) {
+      Object.assign(ui, { editing: false, editError: "" });
+      render();
+      return toast("That matches the project already.");
+    }
+    const r = applyOps(p, res.ops, `Edited ${path}`);
+    autoCommit(p, r.version.label);
+    p.chat.push({ role: "assistant", kind: "build", id: uid(), intro: `Saved your edit to ${path}.`, steps: res.ops.flatMap((op) => describeOp(p, op).split(" · ")), files: r.files, done: true, versionN: r.version.n, versionId: r.version.id });
+    Object.assign(ui, { editing: false, editText: "", editError: "" });
+    ui.result = ui.result && ui.q ? answer(p, ui.q) : null;
+    ui.stick = true;
+    save();
+    render();
+    toast(`Saved as version ${r.version.n}. Run the tests to check it.`);
+  },
+  "term-toggle": () => {
+    ui.termOpen = !ui.termOpen;
+    render();
+  },
+  "term-run": (el) => runCommand(el.dataset.cmd),
+  "add-env-name": (el) => {
+    const name = addEnv(p, el.dataset.name);
+    if (name) {
+      checkpoint(p, `Added variable ${name}`);
+      save();
+      ui.term.push({ t: `✓ Added ${name} to development and production`, c: "ok" });
+    }
+    runCommand("npm run dev");
+  },
+  "fix-tests": () => {
+    closeModal();
+    fixTests();
+  },
+  "pop-publish": () => {
+    ui.pop = "publish";
+    ui.pubStep = null;
+    render();
+  },
+  pr: () => {
+    ui.pop = null;
+    render();
+    prDialog();
+  },
+  "pr-merge": () => {
+    if (runTests(p).failed) return toast("Fix the failing tests first.");
+    const pr = mergePullRequest(p);
+    if (!pr) return;
+    autoCommit(p, `Merge #${pr.number}`);
+    closeModal();
+    p.chat.push({ role: "assistant", kind: "text", text: `Merged #${pr.number} “${pr.title}” into ${pr.base}. Production deploys from ${pr.base}, so it’s ready to publish.`, action: { label: "Publish", do: "pop-publish" } });
+    ui.stick = true;
+    save();
+    render();
+    toast(`Merged #${pr.number} into ${pr.base}.`);
   },
   "code-open": (el) => {
     ui.codeFile = el.dataset.path;
@@ -1610,11 +1910,21 @@ const act = {
     p.git.lastCommit = uid().slice(0, 7);
     save();
     render();
-    toast(`Pushed to ${p.git.branch}.`);
+    toast(`Demo push to ${p.git.branch} recorded locally.`);
   },
-  "open-pr": () => toast(`Opened a pull request from ${p.git.branch} (demo).`),
-  branch: () =>
-    dialog("Work on a branch", "New versions are committed to this branch.", `<form id="branch-form" class="stack"><label class="sr" for="new-branch">Branch</label><input id="new-branch" required value="${esc(p.git.branch)}"><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">Use branch</button></div></form>`),
+  "cmp-main": () => {
+    Object.assign(ui, { pop: null, tab: "code", codeMode: "changes", cmp: "main", focusPath: "", mobile: "app" });
+    setHash();
+    render();
+  },
+  branch: () => {
+    ui.pop = null;
+    render();
+    const sum = branchSummary(p);
+    if (sum)
+      return dialog(`You’re on ${esc(p.git.branch)}`, `It has ${plural(sum.versions.length, "version")} that aren’t in ${esc(sum.base)} yet. Open a pull request to bring them in.`, "", `${btn("Close", "close")}${btn(`${icon("pr", 14)}${p.pr?.state === "open" ? "Review pull request" : "Open a pull request"}`, "pr", "btn primary")}`);
+    dialog("Start a branch", `New versions are committed to the branch. ${esc(p.git.base || "main")} stays as it is until you merge a pull request.`, `<form id="branch-form" class="stack"><label class="field-label" for="new-branch">Branch name</label><input id="new-branch" required pattern="[\\w./-]+" value="architect/update-${p.versions.at(-1).n}"><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">${icon("branch", 14)}Start branch</button></div></form>`);
+  },
   "git-disconnect": () => {
     p.git.connected = false;
     save();
@@ -1623,7 +1933,6 @@ const act = {
   },
   "copy-preview": () => copy(`${location.origin}${location.pathname}?preview=${p.id}`, "Preview link copied."),
   "copy-link": (el) => copy(el.dataset.link, "Link copied."),
-  qr: () => dialog("Scan to open", "", `<div style="display:flex;justify-content:center;padding:10px">${qrArt()}</div><p class="hint" style="text-align:center">${esc(slug(p.name))}.architect.app</p>`),
   release: () => startPublish(),
   domain: () =>
     dialog("Add a custom domain", "Point your domain at Architect and we handle the certificate.", `<form id="domain-form" class="stack"><label class="sr" for="domain">Domain</label><input id="domain" placeholder="help.yourcompany.com" pattern="[a-z0-9.\\-]+\\.[a-z]{2,}" required><p class="hint">Then add a CNAME record pointing to <code>apps.architect.app</code>.</p><div class="dlg-actions">${btn("Cancel", "close")}<button class="btn primary" type="submit">Add domain</button></div></form>`),
@@ -1653,17 +1962,28 @@ const act = {
     render();
   },
 };
-function qrArt() {
-  let cells = "";
-  let seed = [...(p?.id || "x")].reduce((s, c) => s + c.charCodeAt(0), 7);
-  for (let y = 0; y < 21; y++)
-    for (let x = 0; x < 21; x++) {
-      const finder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
-      seed = (seed * 9301 + 49297) % 233280;
-      const on = finder ? (x % 14 === 0 || x % 14 === 6 || y % 14 === 0 || y % 14 === 6 || (x % 14 > 1 && x % 14 < 5 && y % 14 > 1 && y % 14 < 5)) : seed / 233280 > 0.52;
-      if (on) cells += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
-    }
-  return `<svg width="180" height="180" viewBox="-1 -1 23 23" fill="#1F2420" role="img" aria-label="QR code">${cells}</svg>`;
+function prDialog() {
+  const sum = branchSummary(p);
+  if (!sum) return toast("Start a branch first. Pull requests compare a branch with main.");
+  const report = runTests(p);
+  const open = p.pr?.state === "open";
+  const baseFiles = filesAt(p, sum.from),
+    now = generateFiles(p);
+  const title = open ? `#${p.pr.number} ${esc(p.pr.title)}` : "Open a pull request";
+  const sub = `${esc(p.git.branch)} → ${esc(sum.base)} · ${plural(sum.versions.length, "version")} · ${plural(sum.files.length, "file")} changed. Demo pull request; no GitHub changes.`;
+  const checks = report.failed
+    ? `<div class="note-amber" style="align-items:flex-start">${icon("alert", 16)}<div class="grow"><strong>${report.failed} of ${report.total} checks failed</strong>${report.results.filter((r) => !r.ok).map((r) => `<p class="small" style="margin-top:4px">${esc(r.name)}: ${esc(r.detail)}</p>`).join("")}</div>${btn(`${icon("wrench", 13)}Fix with Architect`, "fix-tests", "btn sm")}</div>`
+    : `<div class="note-amber" style="background:var(--sage)">${icon("check", 16)}<span class="grow"><strong>All ${report.total} checks pass</strong> · tests, config and sample questions</span>${btn("Preview this branch", "open-draft", "btn sm")}</div>`;
+  const form = open
+    ? `${p.pr.body ? `<div class="quote" style="white-space:pre-wrap;font-size:13.5px">${esc(p.pr.body)}</div>` : ""}`
+    : `<form id="pr-form" class="stack" style="gap:10px"><div class="field"><label class="field-label" for="pr-title">Title</label><input id="pr-title" required maxlength="80" value="${esc((sum.versions.at(-1)?.label || "Update from Architect").split(" · ")[0].slice(0, 80))}"></div><div class="field"><label class="field-label" for="pr-body">Description</label><textarea id="pr-body" rows="4">${esc(sum.versions.map((v) => `- ${v.label}`).join("\n"))}</textarea></div></form>`;
+  dialog(
+    title,
+    sub,
+    `${form}${checks}<div class="stack" style="gap:8px"><span class="field-label" style="margin:0">Files changed</span><div class="diffs in-dialog">${sum.files.map((d, i) => diffBlock(d.path, baseFiles.find((x) => x.path === d.path)?.text, now.find((x) => x.path === d.path)?.text, d.status, i < 2)).join("") || '<p class="hint">No file changes yet.</p>'}</div></div>`,
+    open ? `${btn("Close", "close")}<button type="button" class="btn primary" data-action="pr-merge" ${report.failed ? 'disabled title="Fix the failing checks first"' : ""}>${icon("pr", 14)}Merge into ${esc(sum.base)}</button>` : `${btn("Cancel", "close")}<button type="submit" form="pr-form" class="btn primary">${icon("pr", 14)}Create pull request</button>`,
+    { wide: true, kind: "pr" },
+  );
 }
 function settingsDialog() {
   const s = p.settings;
@@ -1730,6 +2050,15 @@ document.addEventListener("keydown", (e) => {
     e.target.form?.requestSubmit();
   }
 });
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "repo-search" || !importFlow) return;
+  ui.repoQuery = e.target.value;
+  const pos = e.target.selectionStart;
+  importDialog();
+  const el = document.querySelector("#repo-search");
+  el?.focus();
+  el?.setSelectionRange(pos, pos);
+});
 const onChange = {
   setting: (el) => quickChange([{ type: "settings", change: { [el.dataset.key]: el.checked } }]),
   tool: (el) => {
@@ -1745,6 +2074,11 @@ const onChange = {
     render();
   },
   "builder-model": (el) => (ui.model = el.value),
+  cmp: (el) => {
+    ui.cmp = el.value;
+    ui.focusPath = "";
+    render();
+  },
   noop: () => {},
 };
 document.addEventListener("change", async (e) => {
@@ -1904,22 +2238,33 @@ document.addEventListener("submit", (e) => {
       autoCommit(p, "Initial commit from Architect");
       save();
       render();
-      toast(`Connected. Every version now lands in ${repo}.`);
+      toast(`Demo connection ready for ${repo}. Changes stay in this browser.`);
     }, 1100);
     return;
   }
   if (f.id === "branch-form") {
-    p.git.branch = val("#new-branch");
+    const name = startBranch(p, val("#new-branch"));
+    p.chat.push({ role: "assistant", kind: "text", text: `Working on ${name}. New versions are committed there, and ${p.git.base || "main"} stays as it is until you merge a pull request.` });
+    ui.stick = true;
     save();
     closeModal();
-    return render();
+    render();
+    return toast(`Now on ${name}.`);
   }
-  if (f.id === "invite-form") {
-    p.members ||= [];
-    p.members.push({ email: val("#invite-email"), role: document.querySelector("#invite-role").value, status: "Invited" });
+  if (f.id === "pr-form") {
+    const pr = openPullRequest(p, val("#pr-title"), document.querySelector("#pr-body")?.value.trim() || "");
+    p.chat.push({ role: "assistant", kind: "text", text: `Opened pull request #${pr.number}: ${pr.title}. Checks run on every new version.`, action: { label: "Review it", do: "pr" } });
     save();
     render();
-    return toast("Invite sent.");
+    return prDialog();
+  }
+  if (f.id === "term-form") return runCommand(val("#term-input"));
+  if (f.id === "invite-form") {
+    p.members ||= [];
+    p.members.push({ email: val("#invite-email"), role: document.querySelector("#invite-role").value, status: "Demo invitation" });
+    save();
+    render();
+    return toast("Demo invite added. No email was sent.");
   }
   if (f.id === "domain-form") {
     p.customDomain = { name: val("#domain").toLowerCase(), status: "pending" };
@@ -1969,6 +2314,21 @@ function bind() {
       render();
     }
     grow(e.target);
+  });
+  const ed = document.querySelector("#code-editor");
+  ed?.addEventListener("input", (e) => (ui.editText = e.target.value));
+  ed?.addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && !e.shiftKey) {
+      e.preventDefault();
+      const t = e.target,
+        a = t.selectionStart;
+      t.setRangeText("  ", a, t.selectionEnd, "end");
+      ui.editText = t.value;
+    }
+    if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      act["edit-save"]();
+    }
   });
   document.querySelector("#msgs")?.addEventListener("scroll", (e) => {
     const m = e.target;

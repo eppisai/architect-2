@@ -985,6 +985,7 @@ export function publish(p) {
     copy: clone(p.copy || null),
     pages: clone(p.pages || DEFAULT_PAGES[p.archetype] || []),
     instructions: p.instructions || "",
+    fileEdits: clone(p.fileEdits || {}),
     domain: p.domain || "workplace",
     at: new Date().toISOString(),
     number: p.releases.length + 1,
@@ -1550,7 +1551,11 @@ jobs:
 `,
     },
   ];
-  return files;
+  const edits = p.fileEdits || {};
+  const out = files.map((f) => (edits[f.path] != null ? { ...f, text: edits[f.path], edited: true } : f));
+  for (const [path, text] of Object.entries(edits))
+    if (!files.some((f) => f.path === path)) out.push({ path, area: "app", text, edited: true });
+  return out;
 }
 
 export function changedAreas(p) {
@@ -1583,6 +1588,7 @@ export function rollback(p, release) {
   p.name = release.name;
   p.tools = clone(release.tools || ["read_source"]);
   p.agents = clone(release.agents || []);
+  p.fileEdits = clone(release.fileEdits || {});
   if (release.chips) p.chips = clone(release.chips);
   if (release.copy) p.copy = clone(release.copy);
   if (release.pages) p.pages = clone(release.pages);
@@ -1810,6 +1816,9 @@ export function describeOp(p, op) {
   if (op.type === "agent") return `Added ${op.agent.name}: hands unanswered questions to a person on ${op.agent.channel}`;
   if (op.type === "instructions") return `Told ${a.agent.name}: “${op.line}”`;
   if (op.type === "instructionsSet") return `Rewrote ${a.agent.name}’s instructions`;
+  if (op.type === "source") return `Updated ${op.name || p.sourceName}`;
+  if (op.type === "fileEdit") return `Edited ${op.path}`;
+  if (op.type === "revertFile") return `Reverted ${op.path} to the generated version`;
   if (op.type === "framework") return `Moved ${a.agent.name} to ${op.change.framework || p.settings.framework}${op.change.model ? ` · ${op.change.model}` : ""}`;
   if (op.type === "tools") {
     const added = op.tools.filter((x) => !(p.tools || ["read_source"]).includes(x));
@@ -1828,6 +1837,13 @@ export function applyOp(p, op) {
     (p.agents ||= []).push({ id: crypto.randomUUID(), enabled: true, status: "Configured · not run in prototype", ...op.agent });
   if (op.type === "instructions") p.instructions = `${p.instructions || archetypeOf(p).agent.does}\n${op.line}`;
   if (op.type === "instructionsSet") p.instructions = op.value;
+  if (op.type === "source") (p.source = op.text), (p.sourceName = op.name || p.sourceName), (p.sourceKind = "local");
+  if (op.type === "fileEdit") p.fileEdits = { ...(p.fileEdits || {}), [op.path]: op.text };
+  if (op.type === "revertFile") {
+    const next = { ...(p.fileEdits || {}) };
+    delete next[op.path];
+    p.fileEdits = next;
+  }
   if (op.type === "framework") p.settings = { ...p.settings, ...op.change };
   if (op.type === "tools") p.tools = op.tools;
 }
@@ -1859,7 +1875,7 @@ export function diffFiles(before, after) {
   return out;
 }
 
-const STATE_KEYS = ["archetype", "name", "settings", "source", "sourceName", "sourceKind", "tools", "agents", "pages", "copy", "chips", "instructions"];
+const STATE_KEYS = ["archetype", "name", "settings", "source", "sourceName", "sourceKind", "tools", "agents", "pages", "copy", "chips", "instructions", "fileEdits"];
 const stateOf = (p) => clone(Object.fromEntries(STATE_KEYS.map((k) => [k, p[k] ?? null])));
 
 export function checkpoint(p, label) {
@@ -1903,6 +1919,9 @@ export function restoreVersion(p, id) {
   const before = generateFiles(p);
   const prior = clone(p.settings);
   for (const [k, val] of Object.entries(clone(v.state))) if (val !== null) p[k] = val;
+  // Earlier snapshots use null (or omit this field) when no manual edits exist.
+  // Restoring them must remove later overrides, including newly added files.
+  p.fileEdits = clone(v.state.fileEdits || {});
   p.revision++;
   const files = diffFiles(before, generateFiles(p));
   p.changes.push({
@@ -1968,4 +1987,192 @@ export function committedFiles(p) {
   const v = [...(p.versions || [])].reverse().find((x) => x.revision <= rev);
   if (!v) return generateFiles(p);
   return generateFiles({ ...p, ...clone(v.state), git: p.git });
+}
+
+// ---------- Developer journey: edits, diffs, tests, branches and pull requests ----------
+
+export const FRAMEWORKS = ["Lyzr managed", "LangGraph", "CrewAI", "OpenAI Agents SDK", "Custom framework"];
+
+export const dataPath = (p) => `data/${slug(p.sourceName)}.${archetypeOf(p).id === "insight" ? "csv" : "txt"}`;
+
+// architect.json is two-way: editing it changes the project, and invalid values are refused with a reason.
+export function configOps(p, text) {
+  let cfg;
+  try {
+    cfg = JSON.parse(text);
+  } catch (e) {
+    return { error: `architect.json isn’t valid JSON: ${e.message}` };
+  }
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isObject(cfg)) return { error: "architect.json must contain a JSON object." };
+  for (const [field, value] of [["agent", cfg.agent], ["ui", cfg.ui], ["agent.behavior", cfg.agent?.behavior]]) {
+    if (value !== undefined && !isObject(value)) return { error: `${field} must be a JSON object.` };
+  }
+  for (const [field, value] of [["agent.behavior.citations", cfg.agent?.behavior?.citations], ["ui.feedback", cfg.ui?.feedback]]) {
+    if (value !== undefined && typeof value !== "boolean") return { error: `${field} must be true or false.` };
+  }
+  if (cfg.agent?.tools !== undefined && (!Array.isArray(cfg.agent.tools) || cfg.agent.tools.some((tool) => typeof tool !== "string")))
+    return { error: "agent.tools must be an array of tool names." };
+  const ops = [],
+    change = {},
+    s = p.settings;
+  const bad = (field, value, allowed) => ({ error: `Unknown ${field} “${value}” in architect.json. Use one of: ${allowed.join(", ")}.` });
+  if (typeof cfg.name === "string" && cfg.name.trim() && cfg.name.trim() !== p.name) ops.push({ type: "rename", name: cfg.name.trim().slice(0, 50) });
+  if (cfg.audience !== undefined) {
+    if (!["team", "public"].includes(cfg.audience)) return bad("audience", cfg.audience, ["team", "public"]);
+    change.audience = cfg.audience;
+  }
+  if (cfg.theme !== undefined) {
+    if (!THEMES[cfg.theme]) return bad("theme", cfg.theme, Object.keys(THEMES));
+    change.theme = cfg.theme;
+  }
+  const b = cfg.agent?.behavior || {};
+  if (b.length !== undefined) {
+    if (!["short", "detailed"].includes(b.length)) return bad("agent.behavior.length", b.length, ["short", "detailed"]);
+    change.length = b.length;
+  }
+  if (b.unknown !== undefined) {
+    if (!["explain", "ask"].includes(b.unknown)) return bad("agent.behavior.unknown", b.unknown, ["explain", "ask"]);
+    change.unknown = b.unknown;
+  }
+  if (b.citations !== undefined) change.citations = !!b.citations;
+  if (cfg.ui?.feedback !== undefined) change.feedback = !!cfg.ui.feedback;
+  if (cfg.agent?.framework !== undefined) {
+    if (!FRAMEWORKS.includes(cfg.agent.framework)) return bad("agent.framework", cfg.agent.framework, FRAMEWORKS);
+    change.framework = cfg.agent.framework;
+  }
+  if (Array.isArray(cfg.agent?.tools)) {
+    const known = TOOLS.map((t) => t[0]);
+    const unknown = cfg.agent.tools.find((t) => !known.includes(t));
+    if (unknown) return bad("tool", unknown, known);
+    if (cfg.agent.tools.slice().sort().join() !== (p.tools || ["read_source"]).slice().sort().join()) ops.push({ type: "tools", tools: cfg.agent.tools });
+  }
+  const diff = Object.fromEntries(Object.entries(change).filter(([k, v]) => s[k] !== v));
+  if (Object.keys(diff).length) ops.unshift({ type: "settings", change: diff });
+  return { ops };
+}
+
+export function editFile(p, path, text) {
+  if (path === "architect.json") return configOps(p, text);
+  if (path === dataPath(p)) return { ops: [{ type: "source", text: text.replace(/\n+$/, ""), name: p.sourceName }] };
+  return { ops: [{ type: "fileEdit", path, text }] };
+}
+
+export function filesAt(p, v) {
+  return generateFiles({ ...p, ...clone(v.state), git: p.git });
+}
+
+// Line diff (longest common subsequence); fine for files of a few hundred lines.
+export function lineDiff(a, b) {
+  const n = a.length,
+    m = b.length;
+  if (n * m > 400000) return [...a.map((t) => ({ t: "-", text: t })), ...b.map((t) => ({ t: "+", text: t }))];
+  const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = [];
+  let i = 0,
+    j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) out.push({ t: "=", text: a[i++], j: j++ });
+    else if (L[i + 1][j] >= L[i][j + 1]) out.push({ t: "-", text: a[i++] });
+    else out.push({ t: "+", text: b[j++] });
+  }
+  while (i < n) out.push({ t: "-", text: a[i++] });
+  while (j < m) out.push({ t: "+", text: b[j++] });
+  return out;
+}
+
+export function runTests(p) {
+  const files = generateFiles(p);
+  const results = [];
+  let seed = 7;
+  const t = (name, ok, detail = "") => results.push({ name, ok, detail: ok ? "" : detail, ms: (seed = ((seed * 17 + 11) % 83) + 3) });
+  const cfg = files.find((f) => f.path === "architect.json");
+  let why = "";
+  try {
+    JSON.parse(cfg.text);
+  } catch (e) {
+    why = e.message;
+  }
+  t("architect.json is valid", !why, why);
+  (p.chips || archetypeOf(p).chips).forEach(([label, q], i) => {
+    const r = answer(p, q);
+    const want = i < 2;
+    t(`${label}: ${want ? "answers" : "declines"} “${q}”`, r.supported === want, want ? `Expected an answer. Got: “${r.text}”` : `Expected no answer. Got: “${r.text}”`);
+  });
+  t(`${archetypeOf(p).agent.name} can read ${p.sourceName}`, (p.tools || ["read_source"]).includes("read_source"), "read_source is turned off in Tools.");
+  for (const f of files.filter((x) => x.edited)) {
+    if (/\.json$/.test(f.path)) {
+      let err = "";
+      try {
+        JSON.parse(f.text);
+      } catch (e) {
+        err = e.message;
+      }
+      t(`${f.path} parses`, !err, err);
+    }
+    if (/\.m?js$/.test(f.path)) {
+      let err = "";
+      try {
+        new Function(f.text.replace(/^\s*import\s[^\n]*$/gm, "").replace(/^(\s*)export\s+(default\s+)?/gm, "$1"));
+      } catch (e) {
+        err = `${e.name}: ${e.message}`;
+      }
+      t(`${f.path} has valid syntax`, !err, err);
+    }
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  return { results, failed, passed: results.length - failed, total: results.length };
+}
+
+export function suggestFixes(p, report) {
+  const fixes = [];
+  const chips = p.chips || archetypeOf(p).chips;
+  for (const r of report.results.filter((x) => !x.ok)) {
+    const k = chips.findIndex(([label]) => r.name.startsWith(label + ":"));
+    if (k >= 0) {
+      const want = k < 2;
+      const v = [...(p.versions || [])].reverse().find((x) => x.state.source && x.state.source !== p.source && answer({ ...p, ...clone(x.state) }, chips[k][1]).supported === want);
+      if (v && !fixes.some((f) => f.label.includes(`version ${v.n}`)))
+        fixes.push({ label: `Restore ${v.state.sourceName} from version ${v.n}`, ops: [{ type: "source", text: v.state.source, name: v.state.sourceName }] });
+    }
+    const file = r.name.match(/^(\S+) (parses|has valid syntax)$/)?.[1];
+    if (file) fixes.push({ label: `Revert ${file} to the generated version`, ops: [{ type: "revertFile", path: file }] });
+    if (/can read/.test(r.name)) fixes.push({ label: "Turn source reading back on", ops: [{ type: "tools", tools: [...new Set([...(p.tools || []), "read_source"])] }] });
+  }
+  return fixes;
+}
+
+export function startBranch(p, name) {
+  p.git.base ||= "main";
+  p.git.branch = name;
+  p.git.branchFrom = p.versions.at(-1)?.id;
+  p.pr = null;
+  return name;
+}
+
+export function branchSummary(p) {
+  const base = p.git.base || "main";
+  if (!p.git.branchFrom || p.git.branch === base) return null;
+  const from = p.versions.find((v) => v.id === p.git.branchFrom);
+  if (!from) return null;
+  return { base, from, versions: p.versions.filter((v) => v.revision > from.revision), files: diffFiles(filesAt(p, from), generateFiles(p)) };
+}
+
+export function openPullRequest(p, title, body) {
+  p.prSeq = (p.prSeq || 11) + 1;
+  p.pr = { number: p.prSeq, title, body, state: "open", branch: p.git.branch, base: p.git.base || "main", at: new Date().toISOString() };
+  return p.pr;
+}
+
+export function mergePullRequest(p) {
+  if (!p.pr || p.pr.state !== "open") return null;
+  p.pr.state = "merged";
+  p.pr.mergedAt = new Date().toISOString();
+  p.git.branch = p.pr.base;
+  p.git.branchFrom = null;
+  p.revision++;
+  p.changes.push({ revision: p.revision, reason: `Merged #${p.pr.number} into ${p.pr.base}: ${p.pr.title}`, at: p.pr.mergedAt, areas: [] });
+  checkpoint(p, `Merged #${p.pr.number} into ${p.pr.base}`);
+  return p.pr;
 }
