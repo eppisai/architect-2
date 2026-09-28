@@ -16,7 +16,7 @@ The assignment prioritizes design and end-to-end flows, then feature coverage. T
 | Continue an existing project confidently | Inspection first, setup requirements visible, changes on a branch, diff/checks before merge | Inspection is a prepared fixture; it does not prove arbitrary repository compatibility |
 | Recover from a mistake | Changes create versions; failed checks propose a repair; releases preserve snapshots | Restoring code, restoring data and rolling back a release must have explicit, consistent boundaries |
 
-Warm paper backgrounds, restrained color, consistent pill controls and two main typefaces keep the builder visually quiet. The preview has its own theme so users can distinguish the app they are making from the tool they are using.
+Cool neutral backgrounds, white surfaces, muted green accents and compact rounded controls keep the builder visually quiet. Instrument Sans supplies headings and DM Sans supplies interface text. The preview has its own theme so users can distinguish the app they are making from the tool they are using.
 
 ## What informed the design
 
@@ -49,3 +49,11 @@ Ask a non-technical participant to change an answer's behavior and explain which
 ## Completion-pass design decisions
 
 The agent graph makes responsibility and handoffs visible; selecting a node opens its configuration, and tests show conditional routes separately from the main deterministic answer. Database and app-user controls sit inside Data. Design systems sit beside Preview and on Home because users need them both before and after a build. Listing and analytics settings sit with Publish so discovery follows a reviewed release. None of these additions requires a separate developer mode.
+
+## Visual revision after user review — 28 September
+
+The user found current architect.new's theme and UX better than our delivered prototype. A live read-only comparison of its Home and project workspace confirmed the useful principles: restrained scale, pale neutral surfaces, stable navigation and less competition around the composer. The previous large headline and painted horizon overwhelmed the creation task, while seven adjacent links made discovery noisy. Passing functional tests had not established visual quality.
+
+The revision uses cloud `#f7f9f8`, white `#ffffff`, charcoal `#202725`, secondary text `#65716c`, divider `#e3e9e6` and green `#4c7868`. A compact original construction mark replaces decorative scenery. Home centers a 700px composer; a 216px sidebar groups creation, projects and libraries. Project navigation opens a focused library, and templates use content previews. On phones the sidebar becomes a dismissible menu with focus management and an inert background. Chat, preview chrome, Code, agent configuration, sign-in and publishing use the same surface/control scale. The app being built retains its own independent theme.
+
+This borrows hierarchy and restraint from the reference without copying its branded artwork, wording or complete screen layout. The interpretation remains a design proposal awaiting the user's visual review.

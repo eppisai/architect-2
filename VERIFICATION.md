@@ -29,3 +29,7 @@ Chrome viewport checks: Home, plan/mockup review and Agents at 390px; Database a
 ## Boundaries
 
 Real provider auth, remote GitHub operations, arbitrary imports, framework/terminal processes, organization isolation, billing and generated-app hosting are simulated. Preview answers use three deterministic patterns. Records, projects, releases and analytics persist in browser storage; release links require that storage. Custom framework and integration settings are exported configuration, not an executing external runtime. Research coverage is recorded in [COVERAGE.md](COVERAGE.md).
+
+## Visual/navigation revision checks
+
+On 28 September, verified the redesigned desktop Home, retained-brief sign-in and build, workspace Preview and Agents, project-library navigation and active state, plus mobile menu → Marketplace → close. Home has no document horizontal overflow at 390px and 320px. Mobile menu hides background controls from focus, exposes an explicit close action and supports Escape. The unchanged 45 model/capability tests pass. These checks establish rendering and interaction behavior, not user endorsement of the visual direction.

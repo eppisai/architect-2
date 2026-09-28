@@ -126,7 +126,6 @@ const arrowBtn = (label, action, cls = "", extra = "") =>
   `<button type="button" class="btn primary arrow ${cls}" data-action="${action}" ${extra}>${label}<span class="disc">${icon("arrow", 13)}</span></button>`;
 const sw = (change, checked, label, extra = "") =>
   `<span class="switch"><input type="checkbox" role="switch" data-change="${change}" ${checked ? "checked" : ""} aria-label="${esc(label)}" ${extra}><span></span></span>`;
-const horizon = (band = false, h = 470) => `<svg viewBox="${band ? "0 150 1440 290" : `0 0 1440 ${h}`}" preserveAspectRatio="${band ? "xMidYMid slice" : "xMidYMax slice"}"><rect width="1440" height="${h}" fill="#F4E7D3"/><path d="M0 60 C300 40 700 70 1000 50 C1200 38 1340 52 1440 46" stroke="#F7EEDF" stroke-width="22" fill="none" stroke-linecap="round" opacity=".8"/><path d="M80 120 C380 104 640 128 980 112" stroke="#F0DDC2" stroke-width="14" fill="none" stroke-linecap="round" opacity=".7"/><circle cx="1268" cy="214" r="40" fill="#F6D39E" opacity=".95"/><path d="M0 300 C160 262 300 272 460 288 C620 304 760 256 920 262 C1080 268 1260 292 1440 276 L1440 ${h} L0 ${h}Z" fill="#CFC9DA"/><path d="M140 300 C260 290 380 294 500 302" stroke="#DCD6E6" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M860 276 C960 268 1060 272 1160 282" stroke="#DCD6E6" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M0 350 C200 322 380 334 580 350 C760 364 960 326 1160 334 C1300 340 1380 350 1440 346 L1440 ${h} L0 ${h}Z" fill="#D3D5BA"/><path d="M620 352 C760 344 900 340 1040 342" stroke="#DFE0CA" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M0 392 C240 372 520 384 780 396 C1000 406 1240 388 1440 392 L1440 ${h} L0 ${h}Z" fill="#EADFC8"/><path d="M0 432 C360 418 900 424 1440 432 L1440 ${h} L0 ${h}Z" fill="#FBFAF7"/></svg>`;
 
 // ---------- State ----------
 let db;
@@ -280,8 +279,8 @@ function thumbVars(themeId) {
   const t = THEMES[themeId] || THEMES.forest;
   return `--t-bg:${t.bg};--t-accent:${t.accent};--t-ink:${t.dark ? t.ink : "#2e332e"};--t-line:${t.line};--t-surface:${t.surface}`;
 }
-const thumb = (themeId) =>
-  `<span class="thumb" style="${thumbVars(themeId)}" aria-hidden="true"><span class="t-top"><span class="t-logo"></span><span class="t-nav"><i></i><i></i><i></i></span></span><span class="t-h"></span><span class="t-p"></span><span class="t-in"><i></i></span><span class="t-cards"><i></i><i></i></span></span>`;
+const thumb = (themeId, title = "Your next app", kind = "knowledge") =>
+  `<span class="thumb" style="${thumbVars(themeId)}" aria-hidden="true"><span class="mini-browser"><i></i><i></i><i></i><span>${esc(title)}</span></span><span class="mini-app"><span class="mini-brand">${icon(kind === 'insight' ? 'db' : kind === 'triage' ? 'message' : 'book',12)}${esc(title)}</span><strong>${kind === 'insight' ? 'The story behind your numbers.' : kind === 'triage' ? 'Every request, in the right hands.' : 'Good answers start here.'}</strong><span class="mini-description">${kind === 'insight' ? 'Explore revenue, regions and growth.' : kind === 'triage' ? 'A little less sorting. A lot more helping.' : 'Ask a question. Find the source.'}</span>${kind === 'insight' ? '<span class="mini-bars"><i></i><i></i><i></i><i></i><i></i><i></i></span>' : `<span class="mini-input">${kind === 'triage' ? 'How can we help?' : 'What would you like to know?'}<b>↑</b></span>`}</span></span>`;
 const TPL_THEMES = ["forest", "ocean", "amber", "plum", "ocean", "amber", "forest", "plum"];
 function projectStatus(x) {
   if (build?.pid === x.id) return { kind: "ember", dot: "ember", text: "Building…" };
@@ -294,33 +293,40 @@ function home() {
   const signed = db.signedIn;
   const projects = db.projects.filter((x) => !x.archived);
   const list = ui.homeTab === "published" ? projects.filter((x) => x.releases.length) : ui.homeTab === "shared" ? projects.filter(x => x.sharedDemo) : projects.filter(x => !x.sharedDemo);
-  const showProjects = signed && projects.length;
+  const showProjects = ui.projectsFocused || (signed && projects.length);
   const cards = showProjects
     ? list.length
       ? list
           .map((x) => {
             const st = projectStatus(x);
-            return `<button type="button" class="proj" data-action="open" data-id="${x.id}">${thumb(x.settings.theme)}<span><span class="name">${esc(x.name)}</span><span class="meta"><span class="dot ${st.dot}"></span>${st.text} · edited ${ago(x.changes.at(-1)?.at || x.createdAt)}</span></span></button>`;
+            return `<button type="button" class="proj" data-action="open" data-id="${x.id}">${thumb(x.settings.theme, x.name, x.archetype)}<span><span class="name">${esc(x.name)}</span><span class="meta"><span class="dot ${st.dot}"></span>${st.text} · edited ${ago(x.changes.at(-1)?.at || x.createdAt)}</span></span></button>`;
           })
           .join("")
-      : `<div class="empty" style="grid-column:1/-1"><div class="display">${ui.homeTab === "shared" ? "Nothing shared with you yet" : "Nothing published yet"}</div><p>${ui.homeTab === "shared" ? "Projects other people invite you to appear here. Try the example invitation below." : "Publish a project and it shows up here with its live link."}</p></div>`
+      : `<div class="empty" style="grid-column:1/-1"><div class="display">${ui.homeTab === "shared" ? "Nothing shared with you yet" : ui.homeTab === "published" ? "Nothing published yet" : "Your first project starts with an idea"}</div><p>${ui.homeTab === "shared" ? "Projects other people invite you to appear here. Try the example invitation below." : ui.homeTab === "published" ? "Publish a project and it shows up here with its live link." : "Choose Create an app to describe what you want to build, or start from a template."}</p></div>`
     : TEMPLATES.slice(0, 4)
-        .map(([n, d, b], i) => `<button type="button" class="proj" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i])}<span><span class="name">${n}</span><span class="meta">${d}</span></span></button>`)
+        .map(([n, d, b], i) => `<button type="button" class="proj" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i], n, /sales|data|revenue/i.test(n) ? "insight" : /support|inbox|request/i.test(n) ? "triage" : "knowledge")}<span><span class="name">${n}</span><span class="meta">${d}</span></span></button>`)
         .join("");
   const agentsPicked = ui.homeAgents.length;
-  return `<div class="home">
-<div class="horizon" aria-hidden="true">${horizon()}</div>
-<header class="home-nav"><div class="row"><button type="button" class="brand" data-action="home" aria-label="Architect home">${logo(26)}<span class="word">architect</span></button><nav aria-label="Main">${btn("Templates", "templates", "")}${btn("Agents", "studio", "")}${btn("How it works", "about", "")}</nav></div>
-<div class="row" style="gap:16px">${signed ? `<span class="credits">${icon("bolt", 14)}1,240 credits</span>${btn(esc(initials()), "pop-account", "avatar", 'aria-label="Account menu"')}` : `${btn("Log in", "signin", "btn quiet")}${btn("Get started", "signin", "btn primary")}`}</div></header>
+  const nav = (label, symbol, action, extra = '') => btn(`${icon(symbol,17)}<span>${label}</span>`, 'home-nav-action', 'nav-item', `data-target="${action}" ${extra} ${((action === 'home' && !ui.projectsFocused) || (action === 'home-tab' && ui.projectsFocused && extra.includes(ui.homeTab))) ? 'aria-current="page"' : ''}`);
+  return `<div class="home ${ui.navOpen ? 'nav-open' : ''}">
+${ui.navOpen ? btn('', 'nav-toggle', 'nav-scrim', 'aria-label="Close navigation"') : ''}
+<aside class="home-sidebar" aria-label="Workspace navigation">${btn(icon("x",16),"nav-toggle",'icon-btn sidebar-close','aria-label="Close navigation"')}
+<button type="button" class="brand" data-action="home" aria-label="Architect home">${logo(28)}<span class="word">architect<span class="brand-version">2.0</span></span></button>
+<div class="workspace-label">${icon('users',16)}<span>${signed ? 'Personal workspace' : 'Your workspace'}</span></div>
+<nav><div class="nav-group">${nav('Create an app','plus','home')}${nav('All projects','folder','home-tab','data-tab="mine"')}${nav('Published','globe','home-tab','data-tab="published"')}${nav('Shared with me','users','home-tab','data-tab="shared"')}</div>
+<div class="nav-group"><span class="nav-label">Build with</span>${nav('Templates','grid','templates')}${nav('Prompt library','message','cap-prompts')}${nav('Agent library','bot','studio')}${nav('Marketplace','compass','cap-market')}${nav('Design systems','pencil','cap-design')}</div></nav>
+<div class="sidebar-bottom">${nav('Usage and plan','bolt','usage')}${nav('Help and resources','info','cap-help')}<div class="sidebar-account">${btn(esc(initials()), 'home-nav-action', 'avatar', `aria-label="Account menu" data-target="${signed ? 'pop-account' : 'signin'}"`)}<span><b>${signed ? esc(db.account?.name || 'Your account') : 'Welcome to Architect'}</b><small>${signed ? 'Personal workspace' : 'Sign in to save your work'}</small></span></div></div></aside>
+<main class="home-main ${ui.projectsFocused ? 'show-projects' : ''}" ${ui.navOpen && matchMedia('(max-width:740px)').matches ? 'inert' : ''}><header class="home-nav"><div class="row">${btn(icon('grid',19),'nav-toggle','icon-btn mobile-nav-toggle','aria-label="Open navigation" aria-expanded="'+Boolean(ui.navOpen)+'"')}<span class="mobile-word">architect</span><span class="home-breadcrumb">Workspace <span>/</span> ${ui.projectsFocused ? 'Projects' : 'Create'}</span></div><div class="row">${signed ? btn(`${icon('bolt',14)}1,240 credits`, 'usage', 'credits') : btn('Log in','signin','btn quiet')}${btn(icon('info',17),'about','icon-btn','aria-label="About this prototype"')}</div></header>
 ${ui.pop === "account" ? accountPop("home") : ""}
-<section class="hero"><h1>What should we build today?</h1><p>Describe it. Architect builds the screens, the agents and the backend, then puts it online.</p></section>
-<form class="composer" id="home-form"><label for="brief" class="sr">Describe what you want to build</label><textarea id="brief" rows="2" placeholder="Describe an app, a workflow or an agent. For example: a help desk that answers HR questions and hands anything unclear to a person.">${esc(brief)}</textarea>
+<div class="creation-area"><section class="hero"><div class="creation-mark" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><path d="M32 8 54 21v25L32 58 10 46V21L32 8Z"/><path d="M10 21 32 34 54 21M32 34v24M21 15l22 13v24M21 52V28l22-13"/></svg></div><h1>What would you like to create?</h1><p>Start with an idea. Shape it into an app that works for you.</p></section>
+<form class="composer" id="home-form"><label for="brief" class="sr">Describe what you want to build</label><textarea id="brief" rows="2" placeholder="Describe your app or agent. What should it help people do?">${esc(brief)}</textarea>
 ${ui.attachments.length ? `<div class="attachments">${ui.attachments.map((a, i) => `<span class="attachment">${icon(a.kind === "link" ? "link" : "file", 13)}${esc(a.name)}<button type="button" data-action="remove-attachment" data-i="${i}" aria-label="Remove ${esc(a.name)}">${icon("x", 12)}</button></span>`).join("")}</div>` : ""}
 <div class="composer-tools"><div class="row"><button type="button" class="tool round" data-action="attach" aria-label="Attach a file, screenshot or link">${icon("plus", 17)}</button><button type="button" class="tool ${agentsPicked ? "on" : ""}" data-action="studio">${icon("bot")}${agentsPicked ? plural(agentsPicked, "agent") + " attached" : "Use my agents"}</button><button type="button" class="tool ${ui.planFirst ? "on" : ""}" data-action="toggle-plan" aria-pressed="${ui.planFirst}"><span class="mini-switch"></span>Plan first</button></div>
 <div class="row"><label for="builder-model" class="sr">Model</label><select id="builder-model" class="hide-sm model-select" data-change="builder-model">${["Auto", "Claude Sonnet 5", "GPT-5", "Gemini 2.5 Pro"].map((m) => `<option ${ui.model === m ? "selected" : ""}>${m}</option>`).join("")}</select><button type="submit" class="btn primary big arrow">Build it<span class="disc">${icon("arrow", 15)}</span></button></div></div></form>
-<div class="quick">${btn(`${icon("github")}Import from GitHub`, "import", "")}${btn(`${icon("upload")}Upload a ZIP`, "import-zip", "")}${btn(`${icon("grid")}Browse templates`, "templates", "")}${btn("Prompt library", "cap-prompts", "")}${btn("Marketplace", "cap-market", "")}${btn("Design systems", "cap-design", "")}${btn(`${icon("compass")}Not sure? Ask the consultant`, "consult", "")}</div>
-<section class="home-section"><div class="head"><div class="row wrap" style="gap:10px 26px;align-items:baseline"><h2>${showProjects ? "Your projects" : "Start from a template"}</h2>${showProjects ? `<div class="tabs-line">${[["mine", "Mine"], ["shared", "Shared with me"], ["published", "Published"]].map(([k, l]) => `<button type="button" data-action="home-tab" data-tab="${k}" class="${ui.homeTab === k ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}</div>${btn(showProjects ? "Start from a template →" : "All templates →", "templates", "link")}</div><div class="proj-grid">${cards}</div>${ui.homeTab === "shared" ? `<div style="margin-top:20px">${btn("Try a shared-project invitation", "shared-example", "btn")}</div>` : ""}</section>
-<footer class="home-footer">Architect 2.0 prototype · ${btn("What’s real in this prototype", "about", "link")} · ${btn("Help and resources", "cap-help", "link")}</footer></div>`;
+<div class="quick">${btn(`${icon('github',15)}Import a repository`,'import','')}${btn(`${icon('upload',15)}Upload a ZIP`,'import-zip','')}<span class="quick-divider"></span>${btn(`${icon('compass',15)}Help me find an idea`,'consult','')}</div>
+<div class="starter-prompts"><span>Try an idea</span>${[['Policy assistant','Build a policy assistant for our team with sources and feedback buttons'],['Support inbox','Build a support inbox to route requests and draft replies'],['Sales insights','Build a sales dashboard to compare revenue and explain growth']].map(([name,brief])=>btn(esc(name),'starter-prompt','',`data-brief="${esc(brief)}"`)).join('')}</div></div>
+<section class="home-section" id="projects"><div class="head"><div class="row wrap" style="gap:10px 26px;align-items:baseline"><h2>${showProjects ? "Your projects" : "Start from a template"}</h2>${showProjects ? `<div class="tabs-line">${[["mine", "Mine"], ["shared", "Shared with me"], ["published", "Published"]].map(([k, l]) => `<button type="button" data-action="home-tab" data-tab="${k}" class="${ui.homeTab === k ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}</div>${btn(showProjects ? "Browse templates" : "Browse templates", "templates", "link")}</div><div class="proj-grid">${cards}</div>${ui.homeTab === "shared" ? `<div style="margin-top:20px">${btn("Try a shared-project invitation", "shared-example", "btn")}</div>` : ""}</section>
+<footer class="home-footer">Architect 2.0 · ${btn("About this prototype", "about", "link")}</footer></main></div>`;
 }
 const initials = () => (db.account?.name || "You").slice(0, 2).toUpperCase();
 
@@ -350,7 +356,7 @@ ${arrowBtn("Publish", "pop", "", 'data-pop="publish"')}</div></header>`;
 // Chat
 function chatPanel() {
   const sugg = !build && ui.mode === "build" ? suggestions() : [];
-  return `<aside class="chat" aria-label="Chat with Architect"><div class="msgs" id="msgs" aria-live="polite">${p.chat.map((m, i) => renderMsg(m, i)).join("")}</div>
+  return `<aside class="chat" aria-label="Chat with Architect"><div class="chat-heading"><span>${icon("bolt",15)} Architect</span><span class="chat-ready">${build ? "Building" : "Ready"}</span></div><div class="msgs" id="msgs" aria-live="polite">${p.chat.map((m, i) => renderMsg(m, i)).join("")}</div>
 ${sugg.length ? `<div class="suggest">${sugg.map((s) => btn(esc(s), "suggest", "chip", `data-text="${esc(s)}"`)).join("")}</div>` : ""}
 <form class="composer-mini" id="chat-form" style="position:relative">${ui.mention ? mentionMenu() : ""}${ui.sel ? `<span class="ctx">${icon("pointer", 11)}${EL_LABELS[ui.sel] || ui.sel}<button type="button" data-action="clear-sel" aria-label="Remove selection">${icon("x", 12)}</button></span>` : ""}<label class="sr" for="chat-input">Message Architect</label><textarea id="chat-input" rows="2" placeholder="${ui.mode === "plan" ? "Describe it. Architect plans before building." : "Ask for a change, or @ an agent or page"}">${esc(p.unsent || "")}</textarea>
 <div class="tools-row"><button type="button" class="icon-btn" data-action="attach-chat" aria-label="Attach a file, screenshot or link">${icon("clip", 17)}</button><button type="button" class="icon-btn" data-action="mention" aria-label="Mention an agent or page">${icon("at", 17)}</button><div class="seg sm" style="margin-left:4px" role="group" aria-label="Mode">${[["plan", "Plan"], ["build", "Build"]].map(([k, l]) => `<button type="button" data-action="mode" data-k="${k}" class="${ui.mode === k ? "on" : ""}" aria-pressed="${ui.mode === k}">${l}</button>`).join("")}</div>
@@ -856,7 +862,7 @@ function publishPop() {
     return `<div class="pop" role="dialog" aria-label="Publishing"><div class="row between"><h2>Publishing</h2><span class="small muted">${ui.pubStep + 1} of 3</span></div><div class="progress"><i style="width:${Math.round(((ui.pubStep + 0.5) / 3) * 100)}%"></i></div><div class="steps">${steps.map((s, k) => (k < ui.pubStep ? `<div class="step">${icon("check", 14, "add")}<span>${esc(s)}</span></div>` : k === ui.pubStep ? `<div class="step current">${spinner(14)}<span>${esc(s)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(s)}</span></div>`)).join("")}</div></div>`;
   }
   if (ui.pubStep === "live" && latest) {
-    return `<div class="pop" role="dialog" aria-label="Live"><div class="live-art">${horizon(true)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:30px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}</div><p class="hint">Demo release · Open app and Copy use a link in this browser. The address above illustrates a production domain.</p>${btn("Analytics and marketplace", "cap-publishing", "btn sm")}${releasesList()}</div>`;
+    return `<div class="pop" role="dialog" aria-label="Live"><div class="release-emblem" aria-hidden="true">${icon("check",28)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:24px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}</div><p class="hint">Demo release · Open app and Copy use a link in this browser. The address above illustrates a production domain.</p>${btn("Analytics and marketplace", "cap-publishing", "btn sm")}${releasesList()}</div>`;
   }
   const tests = runTests(p);
   const sum = p.git.connected ? branchSummary(p) : null;
@@ -882,7 +888,7 @@ function releasesList() {
     .join("")}</div>`;
 }
 function accountPop(where) {
-  return `<div class="pop" role="dialog" aria-label="Account" style="width:300px;${where === "home" ? "top:62px;right:24px" : ""}"><div class="row" style="gap:10px"><span class="avatar">${esc(initials())}</span><div><strong>${esc(db.account?.name || "Aman")}</strong><p class="small muted">${esc(db.account?.email || "")}</p></div></div><div class="menu">${where === "ws" ? btn(`${icon("settings", 15)}Project settings`, "settings", "") : ""}${btn(`${icon("bolt", 15)}1,240 credits · usage`, "usage", "")}${btn("Plan", "cap-plans", "")}${btn("Help and resources", "cap-help", "")}${btn(`${icon("info", 15)}What’s real in this prototype`, "about", "")}${btn(`${icon("refresh", 15)}Reset demo data`, "reset-demo", "")}<hr>${btn(`${icon("logout", 15)}Sign out`, "signout", "")}</div></div>`;
+  return `<div class="pop ${where === "home" ? "home-account" : ""}" role="dialog" aria-label="Account" style="width:300px"><div class="row" style="gap:10px"><span class="avatar">${esc(initials())}</span><div><strong>${esc(db.account?.name || "Aman")}</strong><p class="small muted">${esc(db.account?.email || "")}</p></div></div><div class="menu">${where === "ws" ? btn(`${icon("settings", 15)}Project settings`, "settings", "") : ""}${btn(`${icon("bolt", 15)}1,240 credits · usage`, "usage", "")}${btn("Plan", "cap-plans", "")}${btn("Help and resources", "cap-help", "")}${btn(`${icon("info", 15)}What’s real in this prototype`, "about", "")}${btn(`${icon("refresh", 15)}Reset demo data`, "reset-demo", "")}<hr>${btn(`${icon("logout", 15)}Sign out`, "signout", "")}</div></div>`;
 }
 const recipientUrl = (r) => `${location.origin}${location.pathname}?release=${r.id}`;
 
@@ -940,6 +946,8 @@ function openProject(id, tab = "preview") {
 function goHome() {
   closeModal();
   ui.view = "home";
+  ui.navOpen = false;
+  ui.projectsFocused = false;
   ui.pop = null;
   p = null;
   setHash();
@@ -1350,11 +1358,15 @@ function createImported(change) {
 
 // ---------- Actions ----------
 const act = {
+  "nav-toggle": () => { ui.navOpen = !ui.navOpen; render(); document.querySelector(ui.navOpen ? ".sidebar-close" : ".mobile-nav-toggle")?.focus(); },
+  "home-nav-action": (el) => { const wasOpen = ui.navOpen; ui.navOpen = false; if(wasOpen) render(); act[el.dataset.target]?.(el); if(el.dataset.target === 'home-tab') document.getElementById('projects')?.scrollIntoView({behavior:'instant',block:'start'}); },
+  "starter-prompt": (el) => { brief = el.dataset.brief; render(); document.getElementById('brief')?.focus(); },
   home: () => goHome(),
   open: (el) => openProject(el.dataset.id),
   close: () => closeModal(),
   "home-tab": (el) => {
     ui.homeTab = el.dataset.tab;
+    ui.projectsFocused = true;
     render();
   },
   "pop-account": () => {
@@ -1419,7 +1431,7 @@ const act = {
   },
   templates: () => {
     ui.pop = null;
-    dialog("Start from a template", "Each one builds a working app you can change by chatting.", `<div class="tpl-grid">${TEMPLATES.map(([n, d], i) => `<button type="button" class="tpl" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i])}<span><b>${n}</b><small>${d}</small></span></button>`).join("")}</div>`, "", { wide: true });
+    dialog("Start from a template", "Each one builds a working app you can change by chatting.", `<div class="tpl-grid">${TEMPLATES.map(([n, d], i) => `<button type="button" class="tpl" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i], n, /sales|data|revenue/i.test(n) ? "insight" : /support|inbox|request/i.test(n) ? "triage" : "knowledge")}<span><b>${n}</b><small>${d}</small></span></button>`).join("")}</div>`, "", { wide: true });
   },
   "use-template": (el) => {
     closeModal();
@@ -2077,6 +2089,7 @@ document.addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (modal.open) return;
+    if (ui.navOpen) { ui.navOpen = false; render(); document.querySelector(".mobile-nav-toggle")?.focus(); return; }
     if (ui.pop || ui.mention || ui.sel) {
       ui.pop = null;
       ui.mention = false;

@@ -4,6 +4,10 @@
 
 A vibe-coding platform for people who don't write code and for developers who do. Describe an app; Architect plans it, builds it while you watch, and puts it online. Change it by chatting, or by selecting any part of the preview. Developers get the same project as code, agents in their own framework, GitHub and a runnable export, without a separate "developer mode".
 
+## Visual and navigation revision — 28 September 2026
+
+Reworked Home around a compact sidebar and focused composer after the user's comparison with current architect.new. Updated the builder to cool neutral surfaces, muted green accents, smaller headings and consistent controls. Project filters now open a focused library; template cards show app content; starter prompts retain an editable brief. Mobile navigation has an overlay, Escape dismissal and focus handling. Existing capability flows and the generated app's independent themes remain available.
+
 ## Brief-completion pass — 28 September 2026
 
 The researched Architect baseline now has interactive treatments across all A01–A24 capability families. [Coverage and evidence](COVERAGE.md) maps each requirement to its exact entry point and execution boundary.
