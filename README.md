@@ -2,6 +2,8 @@
 
 **Live:** https://architect-2-aman.vercel.app (Vercel) · mirror: https://eppisai.github.io/architect-2/ (GitHub Pages) · **Source:** https://github.com/eppisai/architect-2
 
+**Architecture submission:** [production architecture decisions](ARCHITECTURE.md) · [diagram](architecture-diagram.png). These describe the proposed production system; the functioning prototype and its simulated boundaries are documented below.
+
 A vibe-coding platform for people who don't write code and for developers who do. Describe an app; Architect plans it, builds it while you watch, and puts it online. Change it by chatting, or by selecting any part of the preview. Developers get the same project as code, agents in their own framework, GitHub and a runnable export, without a separate "developer mode".
 
 ## Crafted discovery and coherent transitions — 28 September 2026

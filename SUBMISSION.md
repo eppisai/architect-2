@@ -3,6 +3,8 @@
 **Live prototype:** https://architect-2-aman.vercel.app  
 **Public source:** https://github.com/eppisai/architect-2
 
+**Architecture:** [diagram](architecture-diagram.png) · [decisions and technology choices](ARCHITECTURE.md). Both files are in the public repository. The diagram is a proposed production architecture, with the current prototype boundary stated explicitly.
+
 ## Submission copy
 
 I designed Architect 2.0 around two starting points: a person with an idea and a developer with an existing repository. Both use one workspace to build, try, inspect and release an agentic application.
