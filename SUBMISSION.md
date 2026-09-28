@@ -47,8 +47,18 @@ No account, credentials or API keys are required. Provider buttons simulate sign
 
 ## Validation and scope
 
-The repository has **39 passing model tests**, including actual exported-server checks, exported test suites, invalid configuration, code restore and release rollback. Desktop and phone walkthroughs cover the core journeys. These checks do not establish complete current-Architect parity or real multi-framework execution.
+The repository has **45 passing model tests**, including actual exported-server checks, exported test suites, invalid configuration, code restore and release rollback. Desktop and phone walkthroughs cover the core journeys. The [coverage checklist](COVERAGE.md) maps all explicit requirements and the 24 researched current-Architect capability families to the prototype. These checks do not establish production integration or exhaustive account-level parity.
 
-The next product priorities are a richer agent graph connected to traces, deeper repository/runtime support and a verified current-Architect parity pass. Real authentication and a shared database follow those UX priorities.
+The completed prototype also covers agent workflow routing, scoped connections, collections/schema editing, reusable design systems, agentlet discovery, marketplace listing configuration, analytics and app-user/session settings. The next engineering step after this UX prototype is real repository/runtime support, authentication and a shared database.
 
 See [design rationale and research takeaways](DESIGN.md) for the reasoning behind the experience. AI tools assisted research synthesis, implementation and verification; this is a prototype submission, not a production-service claim.
+
+## Additional feature walkthrough — three minutes
+
+1. **Agents:** inspect the workflow, add a specialist and connect it on “No answer is found.” Run a question outside the source and inspect the simulated handoff. Connections demonstrates MCP/OpenAPI/A2A with scoped permissions.
+2. **Data:** switch to Database, add a record and view its schema. App users configures the app's access and session flows.
+3. **Preview:** open Design system, create a personal or organization palette and apply it. The preview and exported tokens update together.
+4. **Publish:** open Analytics and marketplace, save listing details with public access, publish, then ask a question in the release. Analytics records the question and feedback in this browser.
+5. **Home:** explore Marketplace, Prompt library, customized templates, consultant recommendations and the Shared with me example invitation.
+
+See [COVERAGE.md](COVERAGE.md) for requirement-by-requirement evidence and [VERIFICATION.md](VERIFICATION.md) for validation.

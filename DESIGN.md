@@ -40,8 +40,12 @@ The direct trials were uneven: Architect generation completed but two preview re
 
 The eight explicitly listed surfaces—authentication, Home, chat, preview, agents, building, GitHub and deployment—have interactive flows. Additional flows include import, code edits, diffs, test/repair, data, templates, reusable-agent examples, environment setup, versions, sharing roles, usage and settings.
 
-Current-Architect preservation is partial and should not be represented as verified parity. Agentlet/marketplace discovery, reusable design-system management, database schema editing, analytics, richer agent orchestration and several advanced integration paths remain limited or unimplemented. Framework selection generates scaffolding and setup states; it does not execute every framework.
+The completion pass maps all 24 researched Architect capability families to interactive treatments; see [COVERAGE.md](COVERAGE.md). Agentlets, reusable design systems, database schema/record editing, analytics, listing settings and conditional agent workflows are now implemented. This is feature-flow coverage of the documented/observed baseline, not exhaustive account-level or production parity. Framework selection generates scaffolding and setup states; it does not execute every framework.
 
 ## What to test next with people
 
 Ask a non-technical participant to change an answer's behavior and explain which agent is responsible. Ask a developer to identify what import preserved, fix a failing check and describe what will enter production. Observe wrong turns and uncertainty, especially around simulated setup, preview versus release, and the scope of restore. No participant validation has been conducted yet.
+
+## Completion-pass design decisions
+
+The agent graph makes responsibility and handoffs visible; selecting a node opens its configuration, and tests show conditional routes separately from the main deterministic answer. Database and app-user controls sit inside Data. Design systems sit beside Preview and on Home because users need them both before and after a build. Listing and analytics settings sit with Publish so discovery follows a reviewed release. None of these additions requires a separate developer mode.

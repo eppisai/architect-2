@@ -43,6 +43,8 @@ import {
   filesAt,
 } from "./model.mjs";
 import { zipBytes } from "./zip.mjs";
+import { platform, recordEvent, themeFor } from "./capabilities.mjs";
+import { capabilityUI } from "./capability-ui.mjs";
 
 // ---------- Small helpers ----------
 const app = document.querySelector("#app"),
@@ -163,7 +165,7 @@ const ui = {
   mobile: "chat",
   mention: false,
   codeFile: "",
-  agentSel: "main",
+  agentSel: "workflow",
   agentTab: "behavior",
   testInput: "",
   testResult: null,
@@ -291,7 +293,7 @@ function projectStatus(x) {
 function home() {
   const signed = db.signedIn;
   const projects = db.projects.filter((x) => !x.archived);
-  const list = ui.homeTab === "published" ? projects.filter((x) => x.releases.length) : ui.homeTab === "shared" ? [] : projects;
+  const list = ui.homeTab === "published" ? projects.filter((x) => x.releases.length) : ui.homeTab === "shared" ? projects.filter(x => x.sharedDemo) : projects.filter(x => !x.sharedDemo);
   const showProjects = signed && projects.length;
   const cards = showProjects
     ? list.length
@@ -301,7 +303,7 @@ function home() {
             return `<button type="button" class="proj" data-action="open" data-id="${x.id}">${thumb(x.settings.theme)}<span><span class="name">${esc(x.name)}</span><span class="meta"><span class="dot ${st.dot}"></span>${st.text} · edited ${ago(x.changes.at(-1)?.at || x.createdAt)}</span></span></button>`;
           })
           .join("")
-      : `<div class="empty" style="grid-column:1/-1"><div class="display">${ui.homeTab === "shared" ? "Nothing shared with you yet" : "Nothing published yet"}</div><p>${ui.homeTab === "shared" ? "Projects other people invite you to appear here." : "Publish a project and it shows up here with its live link."}</p></div>`
+      : `<div class="empty" style="grid-column:1/-1"><div class="display">${ui.homeTab === "shared" ? "Nothing shared with you yet" : "Nothing published yet"}</div><p>${ui.homeTab === "shared" ? "Projects other people invite you to appear here. Try the example invitation below." : "Publish a project and it shows up here with its live link."}</p></div>`
     : TEMPLATES.slice(0, 4)
         .map(([n, d, b], i) => `<button type="button" class="proj" data-action="use-template" data-i="${i}">${thumb(TPL_THEMES[i])}<span><span class="name">${n}</span><span class="meta">${d}</span></span></button>`)
         .join("");
@@ -314,11 +316,11 @@ ${ui.pop === "account" ? accountPop("home") : ""}
 <section class="hero"><h1>What should we build today?</h1><p>Describe it. Architect builds the screens, the agents and the backend, then puts it online.</p></section>
 <form class="composer" id="home-form"><label for="brief" class="sr">Describe what you want to build</label><textarea id="brief" rows="2" placeholder="Describe an app, a workflow or an agent. For example: a help desk that answers HR questions and hands anything unclear to a person.">${esc(brief)}</textarea>
 ${ui.attachments.length ? `<div class="attachments">${ui.attachments.map((a, i) => `<span class="attachment">${icon(a.kind === "link" ? "link" : "file", 13)}${esc(a.name)}<button type="button" data-action="remove-attachment" data-i="${i}" aria-label="Remove ${esc(a.name)}">${icon("x", 12)}</button></span>`).join("")}</div>` : ""}
-<div class="composer-tools"><div class="row"><button type="button" class="tool round" data-action="attach" aria-label="Attach a file, screenshot or link">${icon("plus", 17)}</button><button type="button" class="tool ${agentsPicked ? "on" : ""}" data-action="studio">${icon("bot")}${agentsPicked ? plural(agentsPicked, "agent") + " attached" : "Use my agents"}</button><button type="button" class="tool ${ui.planFirst ? "on" : ""} hide-sm" data-action="toggle-plan" aria-pressed="${ui.planFirst}"><span class="mini-switch"></span>Plan first</button></div>
+<div class="composer-tools"><div class="row"><button type="button" class="tool round" data-action="attach" aria-label="Attach a file, screenshot or link">${icon("plus", 17)}</button><button type="button" class="tool ${agentsPicked ? "on" : ""}" data-action="studio">${icon("bot")}${agentsPicked ? plural(agentsPicked, "agent") + " attached" : "Use my agents"}</button><button type="button" class="tool ${ui.planFirst ? "on" : ""}" data-action="toggle-plan" aria-pressed="${ui.planFirst}"><span class="mini-switch"></span>Plan first</button></div>
 <div class="row"><label for="builder-model" class="sr">Model</label><select id="builder-model" class="hide-sm model-select" data-change="builder-model">${["Auto", "Claude Sonnet 5", "GPT-5", "Gemini 2.5 Pro"].map((m) => `<option ${ui.model === m ? "selected" : ""}>${m}</option>`).join("")}</select><button type="submit" class="btn primary big arrow">Build it<span class="disc">${icon("arrow", 15)}</span></button></div></div></form>
-<div class="quick">${btn(`${icon("github")}Import from GitHub`, "import", "")}${btn(`${icon("upload")}Upload a ZIP`, "import-zip", "")}${btn(`${icon("grid")}Browse templates`, "templates", "")}${btn(`${icon("compass")}Not sure? Ask the consultant`, "consult", "")}</div>
-<section class="home-section"><div class="head"><div class="row wrap" style="gap:10px 26px;align-items:baseline"><h2>${showProjects ? "Your projects" : "Start from a template"}</h2>${showProjects ? `<div class="tabs-line">${[["mine", "Mine"], ["shared", "Shared with me"], ["published", "Published"]].map(([k, l]) => `<button type="button" data-action="home-tab" data-tab="${k}" class="${ui.homeTab === k ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}</div>${btn(showProjects ? "Start from a template →" : "All templates →", "templates", "link")}</div><div class="proj-grid">${cards}</div></section>
-<footer class="home-footer">Architect 2.0 prototype · ${btn("What’s real in this prototype", "about", "link")}</footer></div>`;
+<div class="quick">${btn(`${icon("github")}Import from GitHub`, "import", "")}${btn(`${icon("upload")}Upload a ZIP`, "import-zip", "")}${btn(`${icon("grid")}Browse templates`, "templates", "")}${btn("Prompt library", "cap-prompts", "")}${btn("Marketplace", "cap-market", "")}${btn("Design systems", "cap-design", "")}${btn(`${icon("compass")}Not sure? Ask the consultant`, "consult", "")}</div>
+<section class="home-section"><div class="head"><div class="row wrap" style="gap:10px 26px;align-items:baseline"><h2>${showProjects ? "Your projects" : "Start from a template"}</h2>${showProjects ? `<div class="tabs-line">${[["mine", "Mine"], ["shared", "Shared with me"], ["published", "Published"]].map(([k, l]) => `<button type="button" data-action="home-tab" data-tab="${k}" class="${ui.homeTab === k ? "on" : ""}">${l}</button>`).join("")}</div>` : ""}</div>${btn(showProjects ? "Start from a template →" : "All templates →", "templates", "link")}</div><div class="proj-grid">${cards}</div>${ui.homeTab === "shared" ? `<div style="margin-top:20px">${btn("Try a shared-project invitation", "shared-example", "btn")}</div>` : ""}</section>
+<footer class="home-footer">Architect 2.0 prototype · ${btn("What’s real in this prototype", "about", "link")} · ${btn("Help and resources", "cap-help", "link")}</footer></div>`;
 }
 const initials = () => (db.account?.name || "You").slice(0, 2).toUpperCase();
 
@@ -391,8 +393,8 @@ function planCard(m) {
   const built = firstBuild?.done;
   const refs = (p.references || []).map((x) => x.name);
   return `<div class="plan-card"><div class="pc-head">${built ? `<span class="built">${icon("check", 14)}Built in ${firstBuild.secs || 6} s · ${plural(firstBuild.files.length, "file")}</span>` : `<span style="font-weight:600">The plan</span>`}${m.awaiting ? "" : btn("Edit plan", "edit-plan", "link")}</div>
-<dl><dt>Pages</dt><dd>${esc(p.pages.map((x) => x.name).join(", "))}</dd><dt>Agents</dt><dd>${esc(agents.join(", "))}</dd><dt>Data</dt><dd>${esc(p.sourceName)}${p.sourceKind === "sample" ? " (sample)" : ""}</dd><dt>Sign-in</dt><dd>${s.signin ? esc(s.signin) : s.audience === "team" ? "Team sign-in" : "Anyone with the link"}</dd><dt>Look</dt><dd>${esc(THEMES[s.theme]?.label || s.theme)}</dd>${refs.length ? `<dt>References</dt><dd>${esc(refs.join(", "))}</dd>` : ""}</dl>
-<div class="pc-foot"><span>Starting point: ${esc(a.label)}</span>${btn("Change", "switch-start", "link")}</div></div>${m.awaiting ? `<div class="row">${btn("Build this plan", "approve-plan", "btn primary sm", `data-id="${m.id}"`)}${btn("Edit plan", "edit-plan", "btn sm")}</div>` : ""}`;
+<dl><dt>Pages</dt><dd>${esc(p.pages.map((x) => x.name).join(", "))}</dd><dt>Agents</dt><dd>${esc(agents.join(", "))}</dd><dt>Ownership</dt><dd>${btn(platform(p).architecture === "managed" ? "Lyzr managed" : "Repository / GitAgent", "cap-architecture", "link")}</dd><dt>Data</dt><dd>${esc(p.sourceName)}${p.sourceKind === "sample" ? " (sample)" : ""}</dd><dt>Sign-in</dt><dd>${s.signin ? esc(s.signin) : s.audience === "team" ? "Team sign-in" : "Anyone with the link"}</dd><dt>Look</dt><dd>${esc(p.platform?.design?.name || THEMES[s.theme]?.label || s.theme)}</dd>${refs.length ? `<dt>References</dt><dd>${esc(refs.join(", "))}</dd>` : ""}</dl>
+<div class="pc-foot"><span>Starting point: ${esc(a.label)}</span>${btn("Change", "switch-start", "link")}</div></div>${m.awaiting ? `<div class="row">${btn("Review plan and mockup", "review-handoff", "btn primary sm", `data-id="${m.id}"`)}${btn("Edit plan", "edit-plan", "btn sm")}</div>` : ""}`;
 }
 function buildCard(m) {
   const active = build?.msgId === m.id;
@@ -445,10 +447,10 @@ function previewPane() {
 <button type="button" class="icon-btn" data-action="open-draft" aria-label="Open the preview in a new tab">${icon("external", 15)}</button></div>
 <div class="viewport ${ui.device !== "desktop" ? "framed" : ""} ${ui.selecting ? "selecting" : ""}" id="viewport"><div class="device ${ui.device}">${lvl < 99 ? skeletonApp(lvl) : appView(p, { builder: true })}</div>${lvl >= 99 ? inspector() : ""}</div>
 ${ui.console ? runsDrawer() : ""}
-<div class="console"><button type="button" data-action="toggle-console" aria-expanded="${ui.console}">${icon("terminal", 13)}Console</button><span>No errors</span><span>${plural(runs, "run")}</span>${changing ? `<span class="applying">${spinner(12)}Applying changes to the preview</span>` : lvl < 99 ? `<span class="applying">${spinner(12)}Building</span>` : ""}</div></div></div>`;
+<div class="console">${btn("Design system", "cap-design", "") }<button type="button" data-action="toggle-console" aria-expanded="${ui.console}">${icon("terminal", 13)}Console</button><span>No errors</span><span>${plural(runs, "run")}</span>${changing ? `<span class="applying">${spinner(12)}Applying changes to the preview</span>` : lvl < 99 ? `<span class="applying">${spinner(12)}Building</span>` : ""}</div></div></div>`;
 }
 function skeletonApp(lvl) {
-  const th = THEMES[p.settings.theme] || THEMES.forest;
+  const th = themeFor(p, THEMES);
   const vars = themeVars(th);
   const a = A();
   const real = (n) => lvl >= n;
@@ -464,7 +466,7 @@ const themeVars = (th) => `--a-bg:${th.bg};--a-surface:${th.surface};--a-ink:${t
 function appView(t, { builder = false } = {}) {
   const a = A(t),
     s = t.settings,
-    th = THEMES[s.theme] || THEMES.forest,
+    th = themeFor(t, THEMES),
     copy = t.copy || a.app,
     pages = t.pages?.length ? t.pages : [{ id: "home", name: "Ask", kind: "home" }];
   const page = pages.find((x) => x.id === ui.page) || pages[0];
@@ -753,16 +755,17 @@ function fixTests() {
 
 // Agents
 function agentsPane() {
+  if (ui.agentSel === "workflow") return capabilities.workflowPane();
   const a = A(),
     extra = p.agents || [],
     sel = extra.find((x) => x.id === ui.agentSel);
   const setup = frameworkSetup(p);
-  const list = `<div class="side-list"><span class="eyebrow">Agents</span><button type="button" class="agent-item ${!sel ? "on" : ""}" data-action="agent-select" data-id="main"><span class="ag">${icon("bot", 16)}</span><span><b>${esc(a.agent.name)}</b><small>${esc(p.settings.framework)} · answers from ${esc(p.sourceName)}</small></span></button>${extra.map((x) => `<button type="button" class="agent-item ${sel?.id === x.id ? "on" : ""}" data-action="agent-select" data-id="${x.id}"><span class="ag alt">${icon("bot", 16)}</span><span><b>${esc(x.name)}</b><small>${esc(x.trigger || "")}${x.channel ? ` · ${esc(x.channel)}` : ""}</small></span></button>`).join("")}<button type="button" class="btn sm" data-action="add-agent" style="margin:8px 4px 0;align-self:flex-start">${icon("plus", 14)}Add agent</button>
+  const list = `<div class="side-list">${btn(`${icon("branch", 14)} Workflow`, "cap-workflow", "btn sm")}<span class="eyebrow">Agents</span><button type="button" class="agent-item ${!sel ? "on" : ""}" data-action="agent-select" data-id="main"><span class="ag">${icon("bot", 16)}</span><span><b>${esc(a.agent.name)}</b><small>${esc(p.settings.framework)} · answers from ${esc(p.sourceName)}</small></span></button>${extra.map((x) => `<button type="button" class="agent-item ${sel?.id === x.id ? "on" : ""}" data-action="agent-select" data-id="${x.id}"><span class="ag alt">${icon("bot", 16)}</span><span><b>${esc(x.name)}</b><small>${esc(x.trigger || "")}${x.channel ? ` · ${esc(x.channel)}` : ""}</small></span></button>`).join("")}<button type="button" class="btn sm" data-action="add-agent" style="margin:8px 4px 0;align-self:flex-start">${icon("plus", 14)}Add agent</button>
 <div class="flow-mini" aria-label="How a question moves"><span>${icon("message", 12)} Question asked</span><span class="arrow">↓</span><span><b>${esc(a.agent.name)}</b> reads ${esc(p.sourceName)}</span>${extra.map((x) => `<span class="arrow">↓ ${esc((x.trigger || "").toLowerCase())}</span><span><b>${esc(x.name)}</b>${x.channel ? ` → ${esc(x.channel)}` : ""}</span>`).join("")}<span class="arrow">↓</span><span>Answer card</span></div></div>`;
   if (sel)
     return `<div class="panel-wrap">${list}<div class="main-panel"><div class="ph"><span class="ag" style="width:36px;height:36px;border-radius:10px;background:var(--mist);display:inline-flex;align-items:center;justify-content:center">${icon("bot", 18)}</span><div><h2>${esc(sel.name)}</h2><span class="status"><span class="dot live"></span>${esc(sel.status || "Configured")}</span></div></div>
 <div class="card"><div class="listrow"><div><strong>Job</strong><p>${esc(sel.responsibility)}</p></div></div><div class="listrow"><div><strong>Runs</strong><p>${esc(sel.trigger)}</p></div></div>${sel.channel ? `<div class="listrow"><div><strong>Reaches people on</strong><p>${esc(sel.channel)}</p></div></div>` : ""}<div class="listrow"><div><strong>Origin</strong><p>${esc(sel.origin || "Created here")}${sel.entry ? ` · <code>${esc(sel.entry)}</code>` : ""}</p></div></div></div>
-<div class="row" style="margin-top:14px">${btn("Remove agent", "remove-agent", "btn danger sm", `data-id="${sel.id}"`)}</div></div></div>`;
+<div class="row" style="margin-top:14px">${btn("Configure agent", "cap-node", "btn sm", `data-id="${sel.id}"`)}${btn("Remove agent", "remove-agent", "btn danger sm", `data-id="${sel.id}"`)}</div></div></div>`;
   const s = p.settings,
     tools = p.tools || ["read_source"];
   const tabs = [
@@ -793,12 +796,13 @@ ${s.framework === "Custom framework" ? `<form id="custom-entry" class="row" styl
 
 // Data
 function dataPane() {
+  if (capabilities.s.data !== "sources") return capabilities.dataPane();
   const a = A();
   const checks = runChecks(p);
-  return `<div class="panel-wrap"><div class="side-list"><span class="eyebrow">Sources</span><div class="agent-item on"><span class="ag">${icon(a.id === "insight" ? "db" : "book", 16)}</span><span><b>${esc(p.sourceName)}</b><small>${p.sourceKind === "sample" ? "Sample content" : "Your content"} · ${plural(p.source.split("\n").filter(Boolean).length, "line")}</small></span></div><span class="eyebrow" style="margin-top:14px">Connect</span>${a.source.connectors.map((x) => `<button type="button" class="agent-item" data-action="connect-source" data-source="${esc(x)}"><span class="ag alt">${icon("link", 15)}</span><span><b>${esc(x)}</b><small>${p.connections?.includes(x) ? "Set up" : "Not connected"}</small></span></button>`).join("")}</div>
+  return `<div class="data-shell">${capabilities.navData()}<div class="panel-wrap"><div class="side-list"><span class="eyebrow">Sources</span><div class="agent-item on"><span class="ag">${icon(a.id === "insight" ? "db" : "book", 16)}</span><span><b>${esc(p.sourceName)}</b><small>${p.sourceKind === "sample" ? "Sample content" : "Your content"} · ${plural(p.source.split("\n").filter(Boolean).length, "line")}</small></span></div><span class="eyebrow" style="margin-top:14px">Connect</span>${a.source.connectors.map((x) => `<button type="button" class="agent-item" data-action="connect-source" data-source="${esc(x)}"><span class="ag alt">${icon("link", 15)}</span><span><b>${esc(x)}</b><small>${p.connections?.includes(x) ? "Set up" : "Not connected"}</small></span></button>`).join("")}</div>
 <div class="main-panel"><div class="ph"><div><h2>${esc(p.sourceName)}</h2><span class="status">${p.sourceKind === "sample" ? "Sample content. Replace it with yours." : "Your content"}</span></div></div>
 <form class="card" id="source-form"><div class="field"><label class="field-label" for="source-name">Name</label><input id="source-name" value="${esc(p.sourceName)}" required></div><div class="field"><label class="field-label" for="source-text">${esc(a.source.label)}</label><textarea id="source-text" rows="9" class="mono" style="font-size:12.5px">${esc(p.source)}</textarea><p class="hint">${esc(a.source.hint)}</p></div><div class="row between" style="margin-top:12px"><label class="btn sm" style="cursor:pointer">${icon("upload", 13)}Import a .txt or .csv<input id="source-file" type="file" accept=".txt,.csv,.md,text/plain,text/csv" class="sr"></label><button class="btn primary sm" type="submit">Save source</button></div></form>
-<div class="card"><div class="row between"><h3>Sample questions</h3><span class="status ${checks.passed === checks.total ? "live" : ""}"><span class="dot ${checks.passed === checks.total ? "live" : "amber"}"></span>${checks.passed} of ${checks.total} behave</span></div><p class="hint" style="margin:6px 0 8px">The first two should be answered and the last should not. They run before every publish.</p>${checks.results.map((r) => `<div class="toggle-row"><span>${esc(r.question)}<small>${r.expected ? "Should be answered" : "Should not be answered"}</small></span><span class="status ${r.ok ? "live" : "ember"}">${r.ok ? icon("check", 14) : icon("alert", 14)}${r.ok ? "As expected" : "Check this"}</span></div>`).join("")}</div></div></div>`;
+<div class="card"><div class="row between"><h3>Sample questions</h3><span class="status ${checks.passed === checks.total ? "live" : ""}"><span class="dot ${checks.passed === checks.total ? "live" : "amber"}"></span>${checks.passed} of ${checks.total} behave</span></div><p class="hint" style="margin:6px 0 8px">The first two should be answered and the last should not. They run before every publish.</p>${checks.results.map((r) => `<div class="toggle-row"><span>${esc(r.question)}<small>${r.expected ? "Should be answered" : "Should not be answered"}</small></span><span class="status ${r.ok ? "live" : "ember"}">${r.ok ? icon("check", 14) : icon("alert", 14)}${r.ok ? "As expected" : "Check this"}</span></div>`).join("")}</div></div></div></div>`;
 }
 
 // ---------- Popovers ----------
@@ -812,7 +816,7 @@ function workspacePop() {
   return "";
 }
 function projectPop() {
-  return `<div class="pop left" role="dialog" aria-label="Project"><form id="rename-form" class="stack" style="gap:8px"><label class="field-label" for="rename" style="margin:0">Project name</label><div class="row"><input id="rename" value="${esc(p.name)}" maxlength="50"><button class="btn sm primary" type="submit">Save</button></div></form><div class="menu">${btn(`${icon("settings", 15)}Project settings`, "settings", "")}${btn(`${icon("history", 15)}Version history`, "pop", "", 'data-pop="history"')}${btn(`${icon("download", 15)}Download source (.zip)`, "download-zip", "")}${btn(`${icon("file", 15)}Export project (.json)`, "export", "")}<hr>${btn(`${icon("grid", 15)}All projects`, "home", "")}${btn(`${icon("archive", 15)}Archive project`, "archive", "")}</div></div>`;
+  return `<div class="pop left" role="dialog" aria-label="Project"><form id="rename-form" class="stack" style="gap:8px"><label class="field-label" for="rename" style="margin:0">Project name</label><div class="row"><input id="rename" value="${esc(p.name)}" maxlength="50"><button class="btn sm primary" type="submit">Save</button></div></form><div class="menu">${btn(`${icon("github", 15)}GitHub`, "pop", "", 'data-pop="github"')}${btn("Share project", "pop", "", 'data-pop="share"')}${btn(`${icon("settings", 15)}Project settings`, "settings", "")}${btn("Connections", "cap-connections", "")}${btn("App analytics", "cap-analytics", "")}${btn("Design systems", "cap-design", "")}${btn("Publishing settings", "cap-publishing", "")}${btn(`${icon("history", 15)}Version history`, "pop", "", 'data-pop="history"')}${btn(`${icon("download", 15)}Download source (.zip)`, "download-zip", "")}${btn(`${icon("file", 15)}Export project (.json)`, "export", "")}<hr>${btn(`${icon("grid", 15)}All projects`, "home", "")}${btn(`${icon("archive", 15)}Archive project`, "archive", "")}</div></div>`;
 }
 function historyPop() {
   const rel = new Map(p.releases.map((r) => [r.revision, r.number]));
@@ -842,7 +846,7 @@ ${branchRow}
 function sharePop() {
   const me = { email: db.account?.email || "aman@demo.architect", role: "Owner", name: db.account?.name || "Aman" };
   const members = [me, ...(p.members || []).filter((m) => m.role !== "Owner")];
-  return `<div class="pop" role="dialog" aria-label="Share"><div><h2>Share ${esc(p.name)}</h2><p class="sub">Try reviewer and editor roles. Invitations are simulated; preview links open in this browser only.</p></div><form id="invite-form" class="row"><label class="sr" for="invite-email">Email</label><input id="invite-email" type="email" required placeholder="name@company.com"><label class="sr" for="invite-role">Role</label><select id="invite-role" style="width:auto"><option>Can edit</option><option>Can view</option></select><button class="btn primary sm" type="submit">Invite</button></form><div>${members.map((m) => `<div class="listrow"><div class="row" style="gap:10px"><span class="avatar sm">${esc((m.name || m.email).slice(0, 2).toUpperCase())}</span><div><strong style="font-size:13.5px">${esc(m.name || m.email)}</strong><p>${esc(m.email)}${m.status ? ` · ${esc(m.status)}` : ""}</p></div></div><span class="small muted">${esc(m.role)}</span></div>`).join("")}</div><div class="pop-foot"><span>${icon("link", 13)} Preview link</span>${btn(`${icon("copy", 13)}Copy link`, "copy-preview", "btn sm")}</div></div>`;
+  return `<div class="pop" role="dialog" aria-label="Share"><div><h2>Share ${esc(p.name)}</h2><p class="sub">Try reviewer and editor roles. Invitations are simulated; preview links open in this browser only.</p></div><form id="invite-form" class="row"><label class="sr" for="invite-email">Email</label><input id="invite-email" type="email" required placeholder="name@company.com"><label class="sr" for="invite-role">Role</label><select id="invite-role" style="width:auto"><option>Can edit</option><option>Can view</option></select><button class="btn primary sm" type="submit">Invite</button></form><div>${members.map((m) => `<div class="listrow"><div class="row" style="gap:10px"><span class="avatar sm">${esc((m.name || m.email).slice(0, 2).toUpperCase())}</span><div><strong style="font-size:13.5px">${esc(m.name || m.email)}</strong><p>${esc(m.email)}${m.status ? ` · ${esc(m.status)}` : ""}</p></div></div><span class="small muted">${esc(m.role)}</span>${m.role !== "Owner" ? btn("Manage", "member-manage", "btn sm quiet", `data-email="${esc(m.email)}"`) : ""}</div>`).join("")}</div><div class="pop-foot"><span>${icon("link", 13)} Preview link</span>${btn(`${icon("copy", 13)}Copy link`, "copy-preview", "btn sm")}</div></div>`;
 }
 function publishPop() {
   const latest = p.releases.at(-1);
@@ -852,7 +856,7 @@ function publishPop() {
     return `<div class="pop" role="dialog" aria-label="Publishing"><div class="row between"><h2>Publishing</h2><span class="small muted">${ui.pubStep + 1} of 3</span></div><div class="progress"><i style="width:${Math.round(((ui.pubStep + 0.5) / 3) * 100)}%"></i></div><div class="steps">${steps.map((s, k) => (k < ui.pubStep ? `<div class="step">${icon("check", 14, "add")}<span>${esc(s)}</span></div>` : k === ui.pubStep ? `<div class="step current">${spinner(14)}<span>${esc(s)}</span></div>` : `<div class="step todo"><span class="todo-ring"></span><span>${esc(s)}</span></div>`)).join("")}</div></div>`;
   }
   if (ui.pubStep === "live" && latest) {
-    return `<div class="pop" role="dialog" aria-label="Live"><div class="live-art">${horizon(true)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:30px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}</div><p class="hint">Demo release · Open app and Copy use a link in this browser. The address above illustrates a production domain.</p>${releasesList()}</div>`;
+    return `<div class="pop" role="dialog" aria-label="Live"><div class="live-art">${horizon(true)}</div><div><span class="status live"><span class="dot live"></span>Live · release ${latest.number}</span><h2 style="margin-top:6px;font-size:30px">${esc(p.name)} is live.</h2></div><div class="addr"><span class="grow" style="font-weight:500">${esc(address)}</span>${btn(`${icon("copy", 13)}Copy`, "copy-link", "btn sm quiet", `data-link="${esc(recipientUrl(latest))}"`)}</div><div class="row"><a class="btn primary grow" href="?release=${latest.id}" target="_blank" rel="noopener">Open app</a>${btn("Share", "pop", "btn grow", 'data-pop="share"')}</div><p class="hint">Demo release · Open app and Copy use a link in this browser. The address above illustrates a production domain.</p>${btn("Analytics and marketplace", "cap-publishing", "btn sm")}${releasesList()}</div>`;
   }
   const tests = runTests(p);
   const sum = p.git.connected ? branchSummary(p) : null;
@@ -866,7 +870,7 @@ function publishPop() {
 <div class="field"><span class="field-label">Who can open it</span><div class="seg block" role="group">${[["public", "Anyone with the link"], ["team", p.settings.signin ? `${p.settings.signin} sign-in` : "Signed-in people"]].map(([v, l]) => `<button type="button" data-action="set" data-key="audience" data-val="${v}" class="${p.settings.audience === v ? "on" : ""}">${esc(l)}</button>`).join("")}</div></div>
 <div class="field"><span class="field-label">Before it goes live</span><div class="checks"><div>${icon(p.stage === "built" ? "check" : "alert", 14, p.stage === "built" ? "add" : "del")}${p.stage === "built" ? "The app builds" : "Finish building first"}</div><div>${icon(tests.failed ? "alert" : "check", 14, tests.failed ? "del" : "add")}<span class="grow">Tests: ${tests.passed} of ${tests.total} pass</span>${tests.failed ? btn(`${icon("wrench", 12)}Fix`, "fix-tests", "btn sm") : ""}</div><div>${icon(reading ? "check" : "alert", 14, reading ? "add" : "del")}${reading ? `${esc(A().agent.name)} can read ${esc(p.sourceName)}` : "Source reading is off in Tools"}</div>${env.length ? `<div class="note-amber">${icon("alert", 15)}<span class="grow"><code>${esc(env.map((v) => v.name).join(", "))}</code> not set</span>${btn("Add", "settings", "btn sm")}</div>` : ""}${gated ? `<div class="note-amber" style="background:var(--mist)">${icon("branch", 15)}<span class="grow">You’re on <strong>${esc(p.git.branch)}</strong>. Production deploys from ${esc(sum.base)}.</span>${btn(p.pr?.state === "open" ? "Review PR" : "Open PR", "pr", "btn sm")}</div>` : ""}</div></div>
 <button type="button" class="btn primary big arrow" data-action="release" ${p.stage !== "built" || build?.pid === p.id || upToDate || gated || tests.failed ? "disabled" : ""}>${gated ? `Merge into ${esc(sum.base)} to publish` : tests.failed ? "Fix the failing tests to publish" : upToDate ? "Up to date" : latest ? `Publish version ${p.versions.at(-1).n}` : "Publish"}<span class="disc">${icon("arrow", 15)}</span></button>
-<p class="hint">Publishing saves a demo release in this browser. It does not create an external deployment.</p>${p.releases.length ? releasesList() : ""}</div>`;
+<div class="row wrap">${btn("Analytics and marketplace", "cap-publishing", "btn sm")}</div><p class="hint">Publishing saves a demo release in this browser. It does not create an external deployment.</p>${p.releases.length ? releasesList() : ""}</div>`;
 }
 function releasesList() {
   const latest = p.releases.at(-1);
@@ -878,7 +882,7 @@ function releasesList() {
     .join("")}</div>`;
 }
 function accountPop(where) {
-  return `<div class="pop" role="dialog" aria-label="Account" style="width:300px;${where === "home" ? "top:62px;right:24px" : ""}"><div class="row" style="gap:10px"><span class="avatar">${esc(initials())}</span><div><strong>${esc(db.account?.name || "Aman")}</strong><p class="small muted">${esc(db.account?.email || "")}</p></div></div><div class="menu">${where === "ws" ? btn(`${icon("settings", 15)}Project settings`, "settings", "") : ""}${btn(`${icon("bolt", 15)}1,240 credits · usage`, "usage", "")}${btn(`${icon("info", 15)}What’s real in this prototype`, "about", "")}${btn(`${icon("refresh", 15)}Reset demo data`, "reset-demo", "")}<hr>${btn(`${icon("logout", 15)}Sign out`, "signout", "")}</div></div>`;
+  return `<div class="pop" role="dialog" aria-label="Account" style="width:300px;${where === "home" ? "top:62px;right:24px" : ""}"><div class="row" style="gap:10px"><span class="avatar">${esc(initials())}</span><div><strong>${esc(db.account?.name || "Aman")}</strong><p class="small muted">${esc(db.account?.email || "")}</p></div></div><div class="menu">${where === "ws" ? btn(`${icon("settings", 15)}Project settings`, "settings", "") : ""}${btn(`${icon("bolt", 15)}1,240 credits · usage`, "usage", "")}${btn("Plan", "cap-plans", "")}${btn("Help and resources", "cap-help", "")}${btn(`${icon("info", 15)}What’s real in this prototype`, "about", "")}${btn(`${icon("refresh", 15)}Reset demo data`, "reset-demo", "")}<hr>${btn(`${icon("logout", 15)}Sign out`, "signout", "")}</div></div>`;
 }
 const recipientUrl = (r) => `${location.origin}${location.pathname}?release=${r.id}`;
 
@@ -890,6 +894,11 @@ function findRelease(id) {
   }
   return null;
 }
+function recordReleaseEvent(type, detail) {
+  if (!releaseId) return;
+  const owner = db.projects.find(x => x.releases.some(r => r.id === releaseId));
+  if (owner) { recordEvent(owner, type, { ...detail, release: releaseId }); save(); }
+}
 function sharedView() {
   const target = releaseId ? findRelease(releaseId) : byId(previewId);
   const badge = `<a class="made-with" href="./">${logo(18)}Made with Architect</a>`;
@@ -897,7 +906,7 @@ function sharedView() {
     app.innerHTML = `<div class="gate">${logo(34)}<h1 class="display" style="font-size:34px">This link isn’t available here.</h1><p class="muted">Prototype releases live in the browser that published them. Open Architect in that browser to see it.</p><a class="btn primary" href="./">Open Architect</a></div>`;
     return;
   }
-  const th = THEMES[target.settings.theme] || THEMES.forest;
+  const th = themeFor(target, THEMES);
   document.body.style.background = th.bg;
   if (releaseId && target.settings.audience === "team" && !sessionStorage.getItem("recipient-" + target.id)) {
     app.innerHTML = `<div class="appview ${th.dark ? "dark" : ""}" style="${themeVars(th)};min-height:100vh"><div class="gate"><span class="a-mark" style="width:44px;height:44px;border-radius:12px;font-size:20px">${esc(target.name[0])}</span><h1 class="a-h" style="font-family:Georgia,serif;font-weight:400;font-size:34px">${esc(target.name)}</h1><p style="color:var(--a-muted)">Demo sign-in to continue. No account is connected.</p><button type="button" class="a-btn" data-action="recipient-login" style="padding:12px 22px">${target.settings.signin === "Google" ? "Continue with Google" : target.settings.signin ? `Continue with ${esc(target.settings.signin)}` : "Continue with your work account"}</button></div></div>${badge}`;
@@ -913,8 +922,9 @@ function setHash() {
   else history.replaceState(null, "", location.pathname + location.search);
 }
 function resetWorkspaceUi() {
+  capabilities.s.data = "sources"; capabilities.s.trace = null; capabilities.s.query = "";
   Object.assign(ui, { codeMode: "files", cmp: "prev", focusPath: "", editing: false, editText: "", editError: "", term: [], termOpen: true });
-  Object.assign(ui, { tab: "preview", pop: null, selecting: false, sel: "", page: "home", console: false, mode: "build", mobile: "chat", mention: false, codeFile: "", agentSel: "main", agentTab: "behavior", testResult: null, q: "", result: null, showSource: false, fb: "", pubStep: null, stick: true });
+  Object.assign(ui, { tab: "preview", pop: null, selecting: false, sel: "", page: "home", console: false, mode: "build", mobile: "chat", mention: false, codeFile: "", agentSel: "workflow", agentTab: "behavior", testResult: null, q: "", result: null, showSource: false, fb: "", pubStep: null, stick: true });
 }
 function openProject(id, tab = "preview") {
   p = byId(id);
@@ -997,6 +1007,7 @@ function firstSteps(x) {
 }
 function startProject(text, opts = {}) {
   const x = createProject(text, false, opts);
+  if (db.defaultDesign) { platform(x).design = clone(db.defaultDesign); x.settings.theme = db.defaultDesign.theme; }
   for (const f of ui.attachments) {
     const fits = f.text && ((A(x).id === "insight" && /\.csv$/i.test(f.name)) || (A(x).id !== "insight" && /\.(txt|md)$/i.test(f.name) && /^[^:\n]{2,40}:/m.test(f.text)));
     if (fits) {
@@ -1386,7 +1397,7 @@ const act = {
     dialog(
       "What’s real in this prototype",
       "Architect 2.0 is a working prototype. Everything runs in your browser; a few services are stand-ins.",
-      `<div class="two"><div class="card tint-sage"><h3>Real</h3><ul class="trace" style="margin-top:8px"><li>Any prompt becomes a project with pages, agents, data and sample content in its subject</li><li>Chat changes the app, its agent and its code, with every version restorable</li><li>Answers, routing and number questions over your own text</li><li>Generated source as a runnable project and a real ZIP</li><li>Runs with traces, releases with rollback, and a working link for each release</li></ul></div><div class="card tint-sand"><h3>Stand-ins</h3><ul class="trace" style="margin-top:8px"><li>Sign-in providers and email links</li><li>Language models: matching is deterministic</li><li>GitHub, repository import, terminal processes and hosting</li><li>Other agent frameworks: files are written, not run</li></ul><p class="hint" style="margin-top:10px">Projects and releases live in this browser’s storage.</p></div></div>`,
+      `<div class="two"><div class="card tint-sage"><h3>Real</h3><ul class="trace" style="margin-top:8px"><li>Prompts become one of three app patterns, with pages, agents and domain-specific sample content</li><li>Chat changes the app, its agent and its code, with every version restorable</li><li>Answers, routing and number questions over your own text</li><li>Generated source as a runnable project and a real ZIP</li><li>Runs with traces, releases with rollback, and a working link for each release</li><li>Database records with schema checks, reusable design palettes, and browser-local app analytics</li></ul></div><div class="card tint-sand"><h3>Stand-ins</h3><ul class="trace" style="margin-top:8px"><li>Sign-in providers and email links</li><li>Language models: matching is deterministic</li><li>GitHub, repository import, terminal processes and hosting</li><li>Other agent frameworks and conditional handoffs: configured and simulated, not executed</li><li>MCP, OpenAPI, A2A, marketplace submission and organization sharing</li></ul><p class="hint" style="margin-top:10px">Projects and releases live in this browser’s storage.</p></div></div>`,
       "",
       { wide: true },
     );
@@ -1394,7 +1405,7 @@ const act = {
   usage: () => {
     ui.pop = null;
     const n = db.projects.length;
-    dialog("Usage", "Illustrative credits alongside projects and runs saved in this browser.", `<div class="two"><div class="card tint-sand"><span class="eyebrow">Credits left</span><div class="display" style="font-size:40px;margin-top:6px">1,240</div><p class="hint">of 2,000 on the Team plan</p></div><div class="card tint-mist"><span class="eyebrow">Projects</span><div class="display" style="font-size:40px;margin-top:6px">${n}</div><p class="hint">${plural(db.projects.reduce((s, x) => s + (x.runs || []).length, 0), "agent run")} recorded</p></div></div>`);
+    dialog("Usage", "Illustrative credits alongside projects and runs saved in this browser.", `<div class="two"><div class="card tint-sand"><span class="eyebrow">Credits left</span><div class="display" style="font-size:40px;margin-top:6px">1,240</div><p class="hint">of 2,000 on the Team plan</p></div><div class="card tint-mist"><span class="eyebrow">Projects</span><div class="display" style="font-size:40px;margin-top:6px">${n}</div><p class="hint">${plural(db.projects.reduce((s, x) => s + (x.runs || []).length, 0), "agent run")} recorded</p></div></div><div class="table-scroll"><table class="cap-table"><thead><tr><th>Project</th><th>Versions</th><th>Test runs</th><th>Releases</th></tr></thead><tbody>${db.projects.map(x => `<tr><td>${esc(x.name)}</td><td>${x.versions.length}</td><td>${(x.runs || []).length}</td><td>${x.releases.length}</td></tr>`).join("")}</tbody></table></div>${btn("Plan options", "cap-plans", "btn sm")}`);
   },
   "reset-demo": () => {
     ui.pop = null;
@@ -1412,31 +1423,33 @@ const act = {
   },
   "use-template": (el) => {
     closeModal();
-    const text = TEMPLATES[+el.dataset.i][2];
-    brief = text;
-    if (!requireAccount({ type: "build", brief: text })) return;
-    startProject(text);
+    const [name, , text] = TEMPLATES[+el.dataset.i];
+    dialog(`Customize ${esc(name)}`, "Adapt the audience and context before building.", `<form id="cap-prompt" class="stack"><label class="field-label" for="cap-prompt-text">Your app brief</label><textarea id="cap-prompt-text" rows="5" required>${esc(text)}</textarea><div class="dlg-actions"><button type="submit" class="btn primary">Build this app</button></div></form>`);
   },
   consult: () => {
     ui.pop = null;
     const q = act.consult.q || (act.consult.q = { who: "My team", what: "Answer questions", about: "" });
     const chips = (key, list) => `<div class="row wrap">${list.map((x) => btn(x, "consult-pick", `chip ${q[key] === x ? "on" : ""}`, `data-key="${key}" data-val="${x}"`)).join("")}</div>`;
-    dialog("Let’s find a good first app", "The best first app takes one job off someone’s plate. Three quick questions.", `<div class="stack"><span class="field-label">Who will use it?</span>${chips("who", ["My team", "Customers", "Students", "Patients"])}<span class="field-label" style="margin-top:6px">What should it do for them?</span>${chips("what", ["Answer questions", "Sort requests", "Explain our numbers"])}<label class="field-label" for="consult-about" style="margin-top:6px">What is it about?</label><input id="consult-about" placeholder="For example: leave policy, refunds, class bookings" value="${esc(q.about)}"></div>`, arrowBtn("Use this idea", "consult-use"));
+    dialog("Let’s find a good first app", "The best first app takes one job off someone’s plate. Describe the audience, recurring task and tools you already use.", `<div class="stack"><span class="field-label">Who will use it?</span>${chips("who", ["My team", "Customers", "Students", "Patients"])}<span class="field-label" style="margin-top:6px">What should it do for them?</span>${chips("what", ["Answer questions", "Sort requests", "Explain our numbers"])}<label class="field-label" for="consult-about" style="margin-top:6px">What is it about?</label><input id="consult-about" placeholder="For example: leave policy, refunds, class bookings" value="${esc(q.about)}"><label class="field-label" for="consult-tools">Tools you use</label><input id="consult-tools" placeholder="For example: Slack, Google Drive, HubSpot" value="${esc(q.tools || "")}"></div>`, arrowBtn("Find app ideas", "consult-use"));
   },
   "consult-pick": (el) => {
     act.consult.q[el.dataset.key] = el.dataset.val;
     act.consult.q.about = document.querySelector("#consult-about")?.value || act.consult.q.about;
+    act.consult.q.tools = document.querySelector("#consult-tools")?.value || act.consult.q.tools;
     act.consult();
   },
   "consult-use": () => {
     const q = act.consult.q;
     const about = (document.querySelector("#consult-about")?.value || "").trim() || "our most common questions";
     const who = q.who === "My team" ? "my team" : q.who.toLowerCase();
-    brief = q.what === "Answer questions" ? `An assistant where ${who} ask questions about ${about} and get answers with the source.` : q.what === "Sort requests" ? `An inbox where ${who} send requests about ${about}, and each one is routed to the right person with a priority.` : `A dashboard where ${who} ask about the numbers for ${about} and see the rows behind every answer.`;
-    sessionStorage.setItem("architect-draft-brief", brief);
-    closeModal();
-    render();
-    document.querySelector("#brief")?.focus();
+    const tools = document.querySelector("#consult-tools")?.value.trim() || "your existing tools";
+    const ideas = [
+      ["Answer questions", `An assistant where ${who} ask questions about ${about} and get answers with sources. Connect ${tools}.`],
+      ["Sort requests", `An inbox where ${who} send requests about ${about}, routed to the right person with a priority. Connect ${tools}.`],
+      ["Explain our numbers", `A dashboard where ${who} ask about the numbers for ${about} and see the rows behind every answer. Connect ${tools}.`],
+    ].sort((a,b) => (b[0] === q.what) - (a[0] === q.what));
+    dialog("Three ideas to start with", "Choose the outcome closest to your work, then edit the brief.", `<div class="stack">${ideas.map(([name,text],i)=>btn(`<span class="grow"><b>${esc(name)}${i===0 ? " · Based on your task" : ""}</b><small>${esc(text)}</small></span>`, "consult-idea", "choice", `data-brief="${esc(text)}"`)).join("")}</div>`);
+
   },
   attach: () =>
     dialog("Add context", "Screenshots, documents or links help Architect match what you have in mind. Text files become the app’s content.", `<label class="choice" style="cursor:pointer">${icon("upload", 20)}<span class="grow"><b>Upload a file</b><small>.txt, .md or .csv become the app’s data · images and PDFs are kept as references</small></span><input id="attach-file" type="file" class="sr" accept=".txt,.md,.csv,.png,.jpg,.jpeg,.pdf"></label><form id="link-form" class="stack" style="gap:8px"><label class="field-label" for="attach-link" style="margin:0">Or paste a link</label><div class="row"><input id="attach-link" type="url" placeholder="Figma, a website, or a doc" required><button class="btn" type="submit">Add</button></div></form>`),
@@ -1666,6 +1679,7 @@ const act = {
       ui.q = el.dataset.q;
       const t = releaseId ? findRelease(releaseId) : byId(previewId);
       ui.result = answer(t, ui.q);
+      recordReleaseEvent("question", { supported: ui.result.supported });
       ui.showSource = false;
       return render();
     }
@@ -1678,6 +1692,7 @@ const act = {
   },
   fb: (el) => {
     ui.fb = el.dataset.v;
+    recordReleaseEvent("feedback", { value: ui.fb });
     render();
   },
   rerun: (el) => {
@@ -2004,6 +2019,33 @@ function settingsDialog() {
 act["add-env"] = () =>
   dialog("Add an environment variable", "", `<form id="env-form" class="stack"><label class="sr" for="env-name">Name</label><input id="env-name" required placeholder="OPENAI_API_KEY"><p class="hint">Only the name is saved in this prototype.</p><div class="dlg-actions">${btn("Cancel", "settings")}<button class="btn primary" type="submit">Add</button></div></form>`);
 
+act["consult-idea"] = el => dialog("Make this idea yours", "Adjust the context before building.", `<form id="cap-prompt" class="stack"><label class="field-label" for="cap-prompt-text">Your app brief</label><textarea id="cap-prompt-text" rows="5" required>${esc(el.dataset.brief)}</textarea><div class="dlg-actions"><button type="submit" class="btn primary">Build this app</button></div></form>`);
+act["review-handoff"] = el => dialog("Review before building", "The plan and mockup become the starting point for the agents and app.", `<div class="two"><div class="card"><h3>The plan</h3><p>${esc(p.brief)}</p><ol class="trace"><li>Pages: ${esc(p.pages.map(x => x.name).join(", "))}</li><li>Agent: ${esc(A().agent.name)}</li><li>Knowledge: ${esc(p.sourceName)}</li></ol><label class="check-label"><input type="checkbox" checked disabled>Include plan</label></div><div class="card"><h3>App mockup</h3><div class="mockup-review">${thumb(p.settings.theme)}<strong>${esc(p.copy.h2)}</strong><p>${esc(p.copy.intro)}</p><span class="a-btn">${esc(p.copy.button)}</span></div><label class="check-label"><input type="checkbox" checked disabled>Include app mockup</label></div></div>`, btn("Keep planning", "close") + btn("Build with these", "handoff-build", "btn primary", `data-id="${el.dataset.id}"`), { wide:true });
+act["handoff-build"] = el => { closeModal(); act["approve-plan"](el); };
+act["shared-example"] = () => dialog("You’re invited to Northstar Support", "An example collaboration invitation. No external person or account is involved.", `<div class="card"><strong>Operations workspace</strong><p>Role: Can edit</p><p class="hint">Accept to add the example project to Shared with me.</p></div>`, btn("Decline", "close") + btn("Accept demo invitation", "shared-accept", "btn primary"));
+act["shared-accept"] = () => { const existing = db.projects.find(x => x.sharedDemo); if(existing) { closeModal(); return openProject(existing.id); } const x=createProject("A support policy assistant", true); x.sharedDemo=true; x.members=[{email:"operations@example.com",role:"Owner",status:"Sample owner"}]; db.projects.unshift(x);save();closeModal();openProject(x.id); };
+act["member-manage"] = el => dialog("Manage project access", esc(el.dataset.email), `<p class="hint">This changes the demo membership saved in this browser.</p>`, btn("Can view", "member-role", "btn", `data-email="${esc(el.dataset.email)}" data-role="Can view"`) + btn("Can edit", "member-role", "btn", `data-email="${esc(el.dataset.email)}" data-role="Can edit"`) + btn("Remove access", "member-role", "btn danger", `data-email="${esc(el.dataset.email)}" data-role="remove"`));
+act["member-role"] = el => { if(el.dataset.role === "remove") p.members=p.members.filter(x=>x.email!==el.dataset.email); else p.members.find(x=>x.email===el.dataset.email).role=el.dataset.role;save();closeModal();ui.pop="share";render(); };
+
+// Shared state mutations are transactional and participate in file diffs and restore.
+function commitCapability(reason, mutate) {
+  if (build?.pid === p?.id) throw new Error("Wait for the current build to finish before changing project settings.");
+  const before = generateFiles(p), draft = clone(p);
+  mutate(draft);
+  draft.revision++;
+  draft.changes.push({ revision: draft.revision, reason, at: new Date().toISOString() });
+  Object.assign(p, draft);
+  const version = checkpoint(p, reason);
+  const files = diffFiles(before, generateFiles(p));
+  p.chat.push({ role: "assistant", kind: "text", text: reason + ". Saved as version " + version.n + "." });
+  autoCommit(p, reason);
+  save();
+  render();
+  toast(reason);
+  return { version, files };
+}
+const capabilities = capabilityUI({ getProject: () => p, getDB: () => db, ui, esc, btn, icon, dialog, closeModal, render, save, toast, commit: commitCapability, act, themes: THEMES, answer, recordRun, startProject, requireAccount, archetype: archetypeOf });
+
 // ---------- Events ----------
 document.addEventListener("click", (e) => {
   // Select to edit: clicks inside the app pick an element instead of using it
@@ -2170,6 +2212,7 @@ document.addEventListener("submit", (e) => {
       const t = releaseId ? findRelease(releaseId) : byId(previewId);
       ui.q = q;
       ui.result = answer(t, q);
+      recordReleaseEvent("question", { supported: ui.result.supported });
       return render();
     }
     recordPreview(q);
@@ -2261,6 +2304,7 @@ document.addEventListener("submit", (e) => {
   if (f.id === "term-form") return runCommand(val("#term-input"));
   if (f.id === "invite-form") {
     p.members ||= [];
+    if (p.members.some(m => m.email === val("#invite-email")) || val("#invite-email") === db.account?.email) return toast("This person already has access or an invitation.");
     p.members.push({ email: val("#invite-email"), role: document.querySelector("#invite-role").value, status: "Demo invitation" });
     save();
     render();
@@ -2349,7 +2393,10 @@ function grow(t) {
   t.style.overflowY = t.scrollHeight > max ? "auto" : "hidden";
 }
 window.addEventListener("resize", regrow);
-window.addEventListener("beforeunload", () => save());
+window.addEventListener("storage", e => {
+  if (e.key !== STORE || !e.newValue) return;
+  try { const fresh = JSON.parse(e.newValue); if (!fresh.projects) return; const id = p?.id; db = fresh; for (const x of db.projects) normalize(x); p = id ? byId(id) : null; render(); } catch {}
+});
 
 window.addEventListener("hashchange", () => {
   const [id, tab] = location.hash.slice(1).split("/");

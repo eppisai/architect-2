@@ -1,3 +1,4 @@
+import { platform, capabilityFiles, workflowTrace, themeFor } from './capabilities.mjs';
 export const STORE = "architect-v2-projects-1";
 export const clone = (x) => JSON.parse(JSON.stringify(x));
 
@@ -921,6 +922,8 @@ export function createProject(brief, imported = false, opts = {}) {
     for (const op of ops) applyOp(p, op);
     p.initialOps = ops.map((op) => describeOp(p, op));
   }
+  platform(p);
+  p.agents ||= [];
   p.versions = [];
   checkpoint(p, "First version");
   return p;
@@ -986,6 +989,7 @@ export function publish(p) {
     pages: clone(p.pages || DEFAULT_PAGES[p.archetype] || []),
     instructions: p.instructions || "",
     fileEdits: clone(p.fileEdits || {}),
+    platform: clone(platform(p)),
     domain: p.domain || "workplace",
     at: new Date().toISOString(),
     number: p.releases.length + 1,
@@ -1075,9 +1079,7 @@ export function trace(p, r) {
       ? `Matched: ${a.evidenceLabel(r) || "content"}`
       : `No match → ${a.bits.unknown[s.unknown]}`,
     `Applied ${a.bits.length[s.length].toLowerCase()} · ${a.bits.citations[s.citations]}`,
-    ...(p.agents || [])
-      .filter((x) => x.enabled !== false)
-      .map((x) => `Handoff → ${x.name}: ${x.responsibility} (configured, not run)`),
+    ...workflowTrace(p, r.supported).filter(x => x.id !== "main").map(x => `Handoff → ${x.name}: ${x.status} (framework not executed)`),
   ];
 }
 
@@ -1290,7 +1292,7 @@ export function generateFiles(p) {
   const a = archetypeOf(p),
     s = p.settings,
     agent = pySlug(a.agent.name),
-    theme = THEMES[s.theme] || THEMES.forest,
+    theme = themeFor(p, THEMES),
     copy = p.copy || a.app,
     pages = p.pages || DEFAULT_PAGES[a.id] || [];
   const dataFile = `data/${slug(p.sourceName)}.${a.id === "insight" ? "csv" : "txt"}`;
@@ -1551,6 +1553,7 @@ jobs:
 `,
     },
   ];
+  files.push(...capabilityFiles(p));
   const edits = p.fileEdits || {};
   const out = files.map((f) => (edits[f.path] != null ? { ...f, text: edits[f.path], edited: true } : f));
   for (const [path, text] of Object.entries(edits))
@@ -1589,6 +1592,8 @@ export function rollback(p, release) {
   p.tools = clone(release.tools || ["read_source"]);
   p.agents = clone(release.agents || []);
   p.fileEdits = clone(release.fileEdits || {});
+  p.platform = clone(release.platform || {});
+  platform(p);
   if (release.chips) p.chips = clone(release.chips);
   if (release.copy) p.copy = clone(release.copy);
   if (release.pages) p.pages = clone(release.pages);
@@ -1626,6 +1631,9 @@ export function removeAgent(p, id) {
   const i = (p.agents || []).findIndex((x) => x.id === id);
   if (i < 0) return false;
   const [gone] = p.agents.splice(i, 1);
+  const extra = platform(p);
+  extra.routes = extra.routes.filter(r => r.from !== id && r.to !== id);
+  extra.connections = extra.connections.filter(c => c.agent !== id);
   p.revision++;
   p.changes.push({
     revision: p.revision,
@@ -1828,7 +1836,11 @@ export function describeOp(p, op) {
 }
 
 export function applyOp(p, op) {
-  if (op.type === "settings") p.settings = { ...p.settings, ...op.change };
+  if (op.type === "settings") {
+    p.settings = { ...p.settings, ...op.change };
+    if (op.change.theme && p.platform) delete p.platform.design;
+    if (op.change.audience === "team" && p.platform?.marketplace) p.platform.marketplace.enabled = false;
+  }
   if (op.type === "rename") p.name = op.name;
   if (op.type === "copy") p.copy = { ...(p.copy || archetypeOf(p).app), [op.field]: op.value };
   if (op.type === "page") p.pages = [...(p.pages || []), op.page];
@@ -1875,7 +1887,7 @@ export function diffFiles(before, after) {
   return out;
 }
 
-const STATE_KEYS = ["archetype", "name", "settings", "source", "sourceName", "sourceKind", "tools", "agents", "pages", "copy", "chips", "instructions", "fileEdits"];
+const STATE_KEYS = ["archetype", "name", "settings", "source", "sourceName", "sourceKind", "tools", "agents", "pages", "copy", "chips", "instructions", "fileEdits", "platform"];
 const stateOf = (p) => clone(Object.fromEntries(STATE_KEYS.map((k) => [k, p[k] ?? null])));
 
 export function checkpoint(p, label) {
@@ -1922,6 +1934,8 @@ export function restoreVersion(p, id) {
   // Earlier snapshots use null (or omit this field) when no manual edits exist.
   // Restoring them must remove later overrides, including newly added files.
   p.fileEdits = clone(v.state.fileEdits || {});
+  p.platform = clone(v.state.platform || {});
+  platform(p);
   p.revision++;
   const files = diffFiles(before, generateFiles(p));
   p.changes.push({
@@ -1946,6 +1960,7 @@ export function runChecks(x) {
 
 // Projects saved before this version get the fields the new workspace reads.
 export function normalize(p) {
+  platform(p);
   const a = archetypeOf(p);
   if (p.domain && typeof p.domain === "object") (p.customDomain = p.domain), (p.domain = "workplace");
   p.domain ||= "workplace";

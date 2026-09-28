@@ -4,6 +4,14 @@
 
 A vibe-coding platform for people who don't write code and for developers who do. Describe an app; Architect plans it, builds it while you watch, and puts it online. Change it by chatting, or by selecting any part of the preview. Developers get the same project as code, agents in their own framework, GitHub and a runnable export, without a separate "developer mode".
 
+## Brief-completion pass — 28 September 2026
+
+The researched Architect baseline now has interactive treatments across all A01–A24 capability families. [Coverage and evidence](COVERAGE.md) maps each requirement to its exact entry point and execution boundary.
+
+Added agent workflow visualization with editable conditional handoffs and simulated route tests; scoped MCP/OpenAPI/A2A configuration; managed/repository ownership; local collections, records and schema validation; app account/session previews; reusable personal/organization design palettes; searchable agentlets and prompt customization; plan/mockup handoff; listing configuration and local marketplace discovery; app analytics backed by recipient events; shared-project invitation, member-role controls, usage and help.
+
+These additions participate in source export, version history and release rollback. The interface keeps four project tabs; deeper actions live within the relevant tab or project/Publish menu.
+
 ## Developer journey — 28 September 2026
 
 Code now offers Files/Changes, editing, line diffs and a simulated terminal. Editing `architect.json` or the data file updates the preview; other code edits are preserved for export, version restore and release rollback. The terminal runs deterministic checks and simulates process/Git commands; it is not a shell or a running framework runtime.
@@ -59,10 +67,10 @@ python3 -m http.server 8080
 Open `http://localhost:8080/`. No build step, no dependencies.
 
 ```sh
-node --test model.test.mjs
+node --test model.test.mjs capabilities.test.mjs
 ```
 
-Thirty-nine model tests cover naming from any prompt; every domain pack's sample questions for all three engines; chat requests becoming changes with the right files; versions and restore; releases, rollback and the ZIP; and exported projects that answer through their API and pass their own tests. Developer regression tests also cover configuration validation, edit/test/repair, branches, manual-code version restore and release rollback, including older snapshots.
+Forty-five model tests cover naming from any prompt; every domain pack's sample questions for all three engines; chat requests becoming changes with the right files; versions and restore; releases, rollback and the ZIP; and exported projects that answer through their API and pass their own tests. Developer regression tests also cover configuration validation, edit/test/repair, branches, manual-code version restore and release rollback, including older snapshots.
 
 ## Design notes
 
